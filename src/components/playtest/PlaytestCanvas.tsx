@@ -1,0 +1,14 @@
+import { adjacentRooms } from "../../core/playtest/playtestModel";
+import { useWorldloomStore } from "../../store/useWorldloomStore";
+
+const feedback = ["too-intense", "too-calm", "too-long", "too-short", "confusing", "too-linear", "weak-branch", "good"] as const;
+
+export function PlaytestCanvas() {
+  const { project, playtestSession, startPlaytest, enterPlaytestRoom, markFeedback, setMode } = useWorldloomStore();
+  const variant = project.variants.find((item) => item.id === (project.workingVariantId ?? project.activeVariantId)) ?? project.variants[0];
+  if (!variant) return <div className="canvas-empty">Generate and choose a working variant before playtesting.</div>;
+  const session = playtestSession?.variantId === variant.id ? playtestSession : null;
+  const current = variant.rooms.find((room) => room.id === session?.currentRoomId);
+  const adjacent = current ? adjacentRooms(variant, current.id) : [];
+  return <div className="playtest-shell"><div className="playtest-map">{variant.edges.map((edge) => { const from = variant.rooms.find((room) => room.id === edge.from); const to = variant.rooms.find((room) => room.id === edge.to); if (!from || !to) return null; return <div key={edge.id} className={`play-edge ${edge.role}`} style={{ left: Math.min(from.x, to.x) / 3, top: Math.min(from.y, to.y) / 3, width: Math.max(18, Math.abs(from.x - to.x) / 3), transform: `translateY(${Math.abs(from.y - to.y) / 6}px)` }} />; })}{variant.rooms.map((room) => <button key={room.id} className={`play-room ${current?.id === room.id ? "current" : ""} ${room.role}`} style={{ left: room.x / 3, top: room.y / 3, width: Math.max(22, room.width / 3), height: Math.max(18, room.height / 3) }} disabled={!adjacent.some((item) => item.id === room.id) && current?.id !== room.id} onClick={() => enterPlaytestRoom(room.id)}>{room.id}</button>)}</div><aside className="play-hud"><h3>Playtest</h3>{!session ? <button className="primary" onClick={startPlaytest}>Start at Entrance</button> : <><dl><dt>room</dt><dd>{current?.id ?? "none"}</dd><dt>label</dt><dd>{current?.role ?? "--"}</dd><dt>pressure</dt><dd>{(current?.intensity ?? 0).toFixed(2)}</dd><dt>route</dt><dd>{session.visitedRoomIds.length} rooms visited</dd><dt>status</dt><dd>{session.completedAt ? "complete" : "in progress"}</dd></dl><h4>Adjacent</h4>{adjacent.map((room) => <button key={room.id} className="row-button" onClick={() => enterPlaytestRoom(room.id)}>{room.id} / {room.role}</button>)}<h4>Mark this moment</h4><div className="feedback-grid">{feedback.map((item) => <button key={item} onClick={() => markFeedback(item)}>{item}</button>)}</div></>}<button onClick={() => setMode("level")}>Exit Playtest</button></aside></div>;
+}

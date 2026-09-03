@@ -1,0 +1,14 @@
+import type { RoomRole } from "../../core/types";
+import { buildRoomExplanation } from "../../core/provenance/buildExplanation";
+import { useWorldloomStore } from "../../store/useWorldloomStore";
+
+const roles: RoomRole[] = ["transition", "combat", "reward", "relief", "junction"];
+
+export function RoomInspector({ variantId, id }: { variantId: string; id: string }) {
+  const { project, beginRoomEdit, deleteOptionalRoom, restoreRoomGenerated } = useWorldloomStore();
+  const variant = project.variants.find((item) => item.id === variantId);
+  const room = variant?.rooms.find((item) => item.id === id);
+  if (!variant || !room) return null;
+  const optional = !variant.edges.some((edge) => edge.role === "main" && (edge.from === room.id || edge.to === room.id)) && room.role !== "entrance" && room.role !== "exit";
+  return <section><h3>Room</h3><dl><dt>id</dt><dd>{room.id}</dd><dt>role</dt><dd>{room.role}</dd><dt>variant</dt><dd>{variant.name}</dd><dt>intensity</dt><dd>{room.intensity.toFixed(2)}</dd><dt>size</dt><dd>{Math.round(room.width)}x{Math.round(room.height)}</dd><dt>sourceStrokeIds</dt><dd>{room.sourceStrokeIds.join(", ") || "default"}</dd><dt>sourceConstraintIds</dt><dd>{room.sourceConstraintIds.join(", ") || "none"}</dd><dt>manual</dt><dd>{room.manual ? "yes" : "no"}</dd></dl><p>{buildRoomExplanation(room, project.strokes, project.constraints)}</p><label>Role<select value={room.role} disabled={room.role === "entrance" || room.role === "exit"} onChange={(event) => beginRoomEdit(variantId, room.id, { role: event.target.value as RoomRole }, "role")}>{room.role === "entrance" || room.role === "exit" ? <option>{room.role}</option> : roles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label><label>Intensity<input type="range" min="0.05" max="1" step="0.05" value={room.intensity} onChange={(event) => beginRoomEdit(variantId, room.id, { intensity: Number(event.target.value), encounterLevel: Number(event.target.value) }, "intensity")} /></label><label>Resource<input type="range" min="0" max="1" step="0.05" value={room.resourceLevel ?? (room.role === "relief" || room.role === "reward" ? 0.65 : 0.2)} onChange={(event) => beginRoomEdit(variantId, room.id, { resourceLevel: Number(event.target.value) }, "resourceLevel")} /></label><label className="inline"><input type="checkbox" checked={Boolean(room.locked)} onChange={(event) => beginRoomEdit(variantId, room.id, { locked: event.target.checked }, "locked")} /> Locked</label><button onClick={() => restoreRoomGenerated(variantId, room.id)}>Restore generated value</button>{optional && <button className="danger" onClick={() => deleteOptionalRoom(variantId, room.id)}>Delete optional room</button>}</section>;
+}

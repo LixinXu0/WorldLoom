@@ -1,0 +1,6 @@
+import { useWorldloomStore } from "../../store/useWorldloomStore";
+
+export function RevisionHistory() {
+  const { project, createManualRevision, restoreDesignRevision } = useWorldloomStore();
+  return <section className="revision-history"><div className="panel-head"><h3>Revision History</h3><button onClick={createManualRevision}>Save Revision</button></div>{project.revisions.length === 0 ? <p>No revisions yet.</p> : project.revisions.slice().reverse().map((revision) => <article className="revision-item" key={revision.id}><strong>{revision.label}</strong><small>{new Date(revision.timestamp).toLocaleTimeString()} / {revision.scope ?? "baseline"}</small><dl><dt>fit</dt><dd>{revision.intentFitBefore ?? "--"} ¡ú {revision.intentFitAfter ?? "--"}</dd><dt>valid</dt><dd>{String(revision.validationBefore ?? "--")} ¡ú {String(revision.validationAfter ?? "--")}</dd><dt>objects</dt><dd>{revision.affectedObjectCount}</dd></dl><button onClick={() => restoreDesignRevision(revision.id)}>Restore</button></article>)}</section>;
+}

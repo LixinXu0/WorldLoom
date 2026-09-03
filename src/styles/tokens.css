@@ -1,0 +1,13 @@
+﻿:root {
+  --bg: #f4f1ea;
+  --panel: #fbfaf6;
+  --text: #171717;
+  --muted: #686868;
+  --border: #d8d4cb;
+  --flow: #2869ff;
+  --pressure: #e24a3b;
+  --relief: #28a56a;
+  --branch: #8a5cf5;
+  --warning: #f2a93b;
+  --invalid: #c93636;
+}
