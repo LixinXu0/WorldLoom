@@ -1,23 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useWorldloomStore } from "../../store/useWorldloomStore";
-import { getAssetManifest, getWebTextureUrl } from "../../assets/assetManifestClient";
+import { AssetVisual } from "./AssetVisual";
 
 export function AssetLibraryPanel({ onPlaced }: { onPlaced?: () => void } = {}) {
   const { assetLibrary, placeAssetInstance, loadV4DemoScene, project } = useWorldloomStore();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
-  const [manifest, setManifest] = useState<Map<string, string>>(new Map());
   const suppressClickRef = useRef(false);
-  useEffect(() => {
-    let cancelled = false;
-    void getAssetManifest().then((next) => {
-      if (cancelled) return;
-      setManifest(new Map(next.assets.map((asset) => [asset.id, getWebTextureUrl(asset) ?? ""])));
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
-  const categories = useMemo(() => ["all", ...Array.from(new Set(assetLibrary.map((asset) => asset.category)))], [assetLibrary]);
-  const visibleAssets = assetLibrary.filter((asset) => (category === "all" || asset.category === category) && `${asset.name} ${asset.category}`.toLowerCase().includes(query.toLowerCase()));
+  const categories = ["all", "Architecture", "Props", "Nature"];
+  const categoryFor = (value: string) => ["structure", "cover", "traversal", "gating"].includes(value) ? "Architecture" : value === "nature" ? "Nature" : "Props";
+  const visibleAssets = assetLibrary.filter((asset) => (category === "all" || categoryFor(asset.category) === category) && `${asset.name} ${asset.category}`.toLowerCase().includes(query.toLowerCase()));
   const place = (assetId: string, position?: Parameters<typeof placeAssetInstance>[1]) => { placeAssetInstance(assetId, position); onPlaced?.(); };
   const beginDrag = (assetId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -43,8 +35,8 @@ export function AssetLibraryPanel({ onPlaced }: { onPlaced?: () => void } = {}) 
     window.addEventListener("pointerup", up);
   };
   return <aside className="asset-library" aria-label="Asset Library">
-    <h3>Asset Library</h3>
-    <input className="asset-search" value={query} placeholder="Search assets..." onChange={(event) => setQuery(event.target.value)} />
+    
+    <input className="asset-search" value={query} aria-label="Search assets" placeholder="Search assets…" onChange={(event) => setQuery(event.target.value)} />
     <div className="asset-categories">{categories.map((item) => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item === "all" ? "All" : item}</button>)}</div>
     <div className="asset-list">
       {visibleAssets.map((asset) => <button
@@ -56,14 +48,16 @@ export function AssetLibraryPanel({ onPlaced }: { onPlaced?: () => void } = {}) 
           if (!suppressClickRef.current) place(asset.id);
         }}
       >
-        <span className="asset-thumb">{manifest.get(asset.id) ? <img src={manifest.get(asset.id)} alt="" /> : asset.name.slice(0, 2)}</span>
+        <span className="asset-thumb"><AssetVisual id={asset.id} /></span>
         <strong>{asset.name}</strong>
         <small>{asset.category}</small>
       </button>)}
     </div>
-    <h4>Demo Scenes</h4>
+    {visibleAssets.length === 0 && <p className="empty-assets">No assets in this category.</p>}
+    <details className="demo-scenes"><summary>Example compositions</summary>
     <button onClick={() => loadV4DemoScene("high-ground")}>Demo A High-Ground</button>
     <button onClick={() => loadV4DemoScene("gated-recovery")}>Demo B Gated Recovery</button>
     <button onClick={() => loadV4DemoScene("optional-detour")}>Demo C Optional Detour</button>
+    </details>
   </aside>;
 }

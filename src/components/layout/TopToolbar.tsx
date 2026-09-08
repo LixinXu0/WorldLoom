@@ -1,3 +1,4 @@
+import { WorkspaceIcon } from "./WorkspaceIcon";
 import { useRef } from "react";
 import { exportProject } from "../../core/serialization/projectJson";
 import { useWorldloomStore } from "../../store/useWorldloomStore";
@@ -10,7 +11,7 @@ type TopToolbarProps = {
 
 export function TopToolbar({ onOpenBoardPanel }: TopToolbarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const { project, activeTool, undo, redo, compileIntent, generate, regenerate, setSeed, importJson, loadExample, setResearchMode, setTextInstruction, exportResearchLogJson, exportTrainingExampleJson, generateAssetPlan, setTool, groupSelectedSketch } = useWorldloomStore();
+  const { project, undo, redo, compileIntent, generate, regenerate, setSeed, importJson, loadExample, setResearchMode, setTextInstruction, exportResearchLogJson, exportTrainingExampleJson, generateAssetPlan } = useWorldloomStore();
   const download = (text: string, filename: string) => {
     const blob = new Blob([text], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -30,17 +31,16 @@ export function TopToolbar({ onOpenBoardPanel }: TopToolbarProps) {
   const stage = project.assetEditPlan ? "Edit Plan" : project.committedCompositionIntent ? "Committed" : project.compositionHypothesis ? "Grounding" : project.variants.length > 0 ? "Refine" : project.constraints.length > 0 ? "Interpret" : hasSketch ? "Compose" : "Start";
   if (isV4) {
     return <header className="topbar v4-topbar">
-      <div className="brand"><span className="brand-mark">✦</span><strong>Worldloom</strong><button className="project-switcher">{project.name.replace(/^Demo [A-Z] - /, "")}⌄</button></div>
-      <div className="toolbar-tools" aria-label="Board tools">
-        <button className="tool-button" onClick={() => setTool("move")}>✋<span>Pan</span></button>
-        <button className={`tool-button ${activeTool === "select" ? "active" : ""}`} onClick={() => setTool("select")}>↖<span>Select</span></button>
-        <button className={`tool-button ${activeTool === "pen" ? "active" : ""}`} onClick={() => setTool("pen")}>⌁<span>Draw</span></button>
-        <button className="tool-button" onClick={() => setTool("select")}>⌘<span>Connect</span></button>
-        <button className="tool-button" onClick={() => setTool("annotation")}>T<span>Text</span></button>
-        <button className="tool-button" onClick={groupSelectedSketch}>⌗<span>Group</span></button>
-        <details className="toolbar-menu"><summary>•••</summary><div className="toolbar-popover"><button onClick={() => setTool("eraser")}>Erase</button><button onClick={() => onOpenBoardPanel?.("assets")}>Asset Tray</button><button onClick={() => onOpenBoardPanel?.("world")}>World Setting</button><button onClick={() => onOpenBoardPanel?.("map")}>Map Understanding</button><button onClick={loadExample}>Load Demo</button><button onClick={() => inputRef.current?.click()}>Load JSON</button><button onClick={save}>Save JSON</button><button onClick={() => download(exportResearchLogJson(), "research-log.json")}>Research Log</button></div></details>
+      <div className="brand"><span className="brand-mark"><WorkspaceIcon name="loom" /></span><strong>Worldloom</strong>
+        <details className="toolbar-menu project-menu"><summary>{project.name.replace(/^Demo [A-Z] - /, "")} <span>⌄</span></summary>
+          <div className="toolbar-popover"><button onClick={() => useWorldloomStore.getState().loadSemanticDemo()}>Load semantic demo</button>
+            <button onClick={() => onOpenBoardPanel?.("assets")}>Assets</button><button onClick={() => useWorldloomStore.getState().setTool("eraser")}>Erase strokes</button><button onClick={() => onOpenBoardPanel?.("world")}>World setting</button><button onClick={() => onOpenBoardPanel?.("map")}>Map understanding</button>
+            <button onClick={() => useWorldloomStore.getState().setMode("intent")}>Return to board</button>
+            <button onClick={() => inputRef.current?.click()}>Load JSON</button><button onClick={save}>Save JSON</button><button onClick={() => download(exportResearchLogJson(), "research-log.json")}>Export research log</button>
+          </div>
+        </details>
       </div>
-      <div className="topbar-actions"><button className="icon-button large" aria-label="Undo" title="Undo" onClick={undo}>↶</button><button className="icon-button large" aria-label="Redo" title="Redo" onClick={redo}>↷</button><button className="soft-action" onClick={() => onOpenBoardPanel?.("world")}>Project</button><button className="playtest-button" disabled={!project.variants.length} onClick={() => useWorldloomStore.getState().startPlaytest()}>▷ Playtest</button><button className="share-button" onClick={save}>⇧ Share</button><span className="user-orb">W</span></div>
+      <div className="topbar-actions"><button className="icon-button large" aria-label="Undo" title="Undo" onClick={undo}>↶</button><button className="icon-button large" aria-label="Redo" title="Redo" onClick={redo}>↷</button><button className="playtest-button" title={project.variants.length ? "Playtest generated level" : "Generate a level before playtesting"} disabled={!project.variants.length} onClick={() => useWorldloomStore.getState().startPlaytest()}>▷ Playtest</button></div>
       <input ref={inputRef} type="file" accept="application/json" hidden onChange={(event) => load(event.target.files?.[0])} />
     </header>;
   }

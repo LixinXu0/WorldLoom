@@ -1,3 +1,4 @@
+import type { SemanticItem, SketchSemantic } from "./semanticStyles";
 import type { AuthoringIntent } from "../intent/types";
 import type { Point, StrokeType } from "../types";
 
@@ -6,6 +7,7 @@ export type Bounds = { x: number; y: number; width: number; height: number };
 export type RawStrokePoint = { x: number; y: number; t: number; pressure?: number };
 
 export type RawStroke = {
+  semanticStyle?: SketchSemantic;
   id: string;
   points: RawStrokePoint[];
   createdAt: number;
@@ -129,6 +131,7 @@ export type AssetAwareVisualUtterance = {
 };
 
 export type SketchState = {
+  semanticItems?: SemanticItem[];
   assetInstances: AssetInstance[];
   rawStrokes: RawStroke[];
   gestureCandidates: GeometricGestureCandidate[];

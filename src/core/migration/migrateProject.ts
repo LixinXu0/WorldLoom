@@ -10,6 +10,7 @@ function normalizeSketchState(project: Partial<WorldloomProject>): WorldloomProj
   return {
     assetInstances: sketch.assetInstances ?? [],
     rawStrokes: sketch.rawStrokes ?? [],
+    semanticItems: sketch.semanticItems ?? [],
     gestureCandidates: sketch.gestureCandidates ?? [],
     episodes: sketch.episodes ?? [],
     marks: sketch.marks ?? base.marks,

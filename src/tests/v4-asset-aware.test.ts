@@ -123,3 +123,25 @@ describe("V4 asset-aware composition workflow", () => {
     expect(useWorldloomStore.getState().project.sketchState.rawStrokes).toHaveLength(0);
   });
 });
+
+
+describe("Spatial annotations", () => {
+  it("attaches to an existing asset, round-trips JSON, and supports undo/redo", () => {
+    resetStore();
+    useWorldloomStore.getState().loadV4DemoScene("high-ground");
+    useWorldloomStore.getState().annotateSketch("AI-watchtower", "  high ground overlooks area  ");
+    const project = useWorldloomStore.getState().project;
+    expect(project.sketchState.annotations[0]).toMatchObject({targetId:"AI-watchtower",text:"high ground overlooks area"});
+    const imported = importProjectJson(exportProject(project));
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) throw new Error(imported.error);
+    expect(imported.project.sketchState.annotations).toEqual(project.sketchState.annotations);
+    useWorldloomStore.getState().undo();
+    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(0);
+    useWorldloomStore.getState().redo();
+    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(1);
+    useWorldloomStore.getState().annotateSketch("missing-asset", "Invalid target");
+    useWorldloomStore.getState().annotateSketch("AI-watchtower", "   ");
+    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(1);
+  });
+});

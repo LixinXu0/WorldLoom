@@ -1,3 +1,5 @@
+import { sketchStyles, strokeStyle } from "../../core/sketch/semanticStyles";
+import { AssetVisual } from "../assets/AssetVisual";
 import { useRef } from "react";
 import { assetById } from "../../assets/mockAssetLibrary";
 import { boundsForRawStroke } from "../../core/sketch/rawStrokeGeometry";
@@ -16,7 +18,7 @@ export function AssetSandboxCanvas({ camera }: { camera?: BoardCamera } = {}) {
   const dragRef = useRef<{ assetId: string; x: number; y: number } | null>(null);
   const canDraw = activeTool === "pen";
   const canErase = activeTool === "eraser";
-  const canSelect = activeTool === "select" || activeTool === "move";
+  const canSelect = activeTool === "select" || activeTool === "move" || activeTool === "annotation";
 
   const pointFromClient = (clientX: number, clientY: number, target: Element) => {
     const rect = target.closest(".board-viewport")?.getBoundingClientRect() ?? target.getBoundingClientRect();
@@ -94,28 +96,32 @@ export function AssetSandboxCanvas({ camera }: { camera?: BoardCamera } = {}) {
       dragRef.current = null;
     }}
   >
-    <svg className="asset-sketch-layer" viewBox={`0 0 ${project.metadata.canvasWidth} ${project.metadata.canvasHeight}`} aria-hidden="true">
-      {project.sketchState.rawStrokes.filter((stroke) => !stroke.deleted).map((stroke) => <polyline key={stroke.id} className={selected.has(stroke.id) ? "raw-stroke selected" : "raw-stroke"} points={strokePoints(stroke)} fill="none" stroke="#171717" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />)}
+    <svg preserveAspectRatio="none" className="asset-sketch-layer" viewBox={`0 0 ${project.metadata.canvasWidth} ${project.metadata.canvasHeight}`} aria-hidden="true">
+      <defs>{Object.entries(sketchStyles).map(([id,style])=><marker key={id} id={`semantic-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1Q5 4 9 5L2 9" fill="none" stroke={style.color} strokeWidth="1.4"/></marker>)}{["flow","warning","invalid","text"].map(c=><marker key={c} id={`arrow-${c}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke={`var(--${c})`} strokeWidth="1.5"/></marker>)}</defs>
+      {project.sketchState.rawStrokes.filter(stroke=>!stroke.deleted).map(stroke=>{const style=strokeStyle(stroke.semanticStyle);return <polyline key={stroke.id} data-semantic={stroke.semanticStyle??"main-route"} className={selected.has(stroke.id)?"raw-stroke selected":"raw-stroke"} points={strokePoints(stroke)} fill="none" style={{stroke:style.color,strokeWidth:selected.has(stroke.id)?3:2.4}} strokeDasharray={style.dash} markerEnd={style.arrow?`url(#semantic-${stroke.semanticStyle})`:undefined} strokeLinecap="round" strokeLinejoin="round"/>;})}
       {project.sketchState.marks.map((mark) => <polyline
         key={mark.id}
         points={mark.points.map((point) => `${point.x},${point.y}`).join(" ")}
-        fill={mark.kind === "loop" || mark.kind === "region" ? "rgba(31,122,79,0.08)" : "none"}
-        stroke={mark.kind === "arrow" ? "#2869ff" : mark.kind === "boundary" ? "#8a5a00" : "#171717"}
+        fill={mark.kind === "loop" || mark.kind === "region" ? "rgba(173,133,237,0.06)" : "none"}
+        stroke={mark.kind === "arrow" ? "var(--flow)" : mark.kind === "boundary" ? "var(--branch)" : "var(--branch)"}
         strokeWidth={mark.kind === "arrow" ? 3 : 2}
         strokeDasharray={mark.kind === "loop" || mark.kind === "region" ? "6 4" : undefined}
       />)}
+      {project.sketchState.annotations.map(note => { const a=project.sketchState.assetInstances.find(a=>a.id===note.targetId); return a ? <g key={note.id}><path d={`M${a.position.x-15} ${a.position.y-42}q-20 -15 -35 -15`} stroke="var(--text)" fill="none"/><text x={a.position.x-130} y={a.position.y-65} className="sketch-note">{note.text}</text></g> : null; })}
       {project.sketchState.relations.map((relation) => {
         const source = project.sketchState.assetInstances.find((asset) => asset.id === relation.sourceId)?.position;
         const target = project.sketchState.assetInstances.find((asset) => asset.id === relation.targetId)?.position;
         if (!source || !target) return null;
-        return <line key={relation.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#171717" strokeWidth="2" strokeDasharray={relation.relationType === "related_to" || relation.relationType === "relates_to" ? "5 5" : undefined} />;
+        const color = /gat|block/.test(relation.relationType) ? "invalid" : /leads/.test(relation.relationType) ? "warning" : /guard|connect/.test(relation.relationType) ? "flow" : "text";
+        return <line markerEnd={`url(#arrow-${color})`} key={relation.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={`var(--${color})`} strokeWidth="2" strokeDasharray={relation.relationType === "related_to" || relation.relationType === "relates_to" ? "5 5" : undefined} />;
       })}
     </svg>
     {project.sketchState.assetInstances.map((asset) => {
       const definition = assetById(asset.assetDefinitionId);
       return <button
         key={asset.id}
-        className={`asset-instance ${selected.has(asset.id) ? "active" : ""} ${asset.locked ? "locked" : ""}`}
+        aria-label={`Select ${definition?.name ?? asset.assetDefinitionId}`}
+        className={`asset-instance ${selected.has(asset.id) ? "active" : ""} ${asset.locked ? "locked" : ""} ${project.committedCompositionIntent?.assetInstanceIds.includes(asset.id) ? "committed" : ""}`}
         style={{ left: `${(asset.position.x / project.metadata.canvasWidth) * 100}%`, top: `${(asset.position.y / project.metadata.canvasHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${asset.rotation}deg) scale(${asset.scale ?? 1})`, pointerEvents: canSelect ? "auto" : "none" }}
         onPointerDown={(event) => {
           if (!canSelect) return;
@@ -142,6 +148,7 @@ export function AssetSandboxCanvas({ camera }: { camera?: BoardCamera } = {}) {
           dragRef.current = null;
         }}
       >
+        <AssetVisual id={asset.assetDefinitionId} />
         <strong>{definition?.name ?? asset.assetDefinitionId}</strong>
         <small>{asset.roleAssignments[0] ?? (asset.locked ? "locked" : "unassigned")}</small>
       </button>;

@@ -1,3 +1,5 @@
+import { createSemanticDemoProject } from "../examples/semanticDemo";
+import type { SketchSemantic } from "../core/sketch/semanticStyles";
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject } from "../core/types";
@@ -37,6 +39,9 @@ import { createResearchEvent, createResearchSessionId, exportResearchLog, type R
 export type WorldloomState = {
   project: WorldloomProject;
   activeTool: Tool;
+  sketchSemantic: SketchSemantic;
+  setSketchSemantic: (style: SketchSemantic) => void;
+  loadSemanticDemo: () => void;
   selected: SelectedEntity;
   editorMode: EditorMode;
   editorSubmode: EditorSubmode;
@@ -77,6 +82,7 @@ export type WorldloomState = {
   addSketchMark: (kind: SketchMarkKind) => void;
   addSketchObject: (objectType: SketchObjectType | string) => void;
   moveSketchObject: (objectId: string, dx: number, dy: number) => void;
+  annotateSketch: (targetId: string, text: string) => void;
   addSketchRelation: (sourceId: string, targetId: string, relationType: SketchRelationType) => void;
   deleteSketchRelation: (relationId: string) => void;
   selectSketchIds: (ids: string[]) => void;
@@ -178,7 +184,7 @@ function buildDraft(project: WorldloomProject, variantId: string, before: RoomNo
 }
 
 export const useWorldloomStore = create<WorldloomState>((set, get) => {
-  const initialProject = createEmptyProject();
+  const initialProject = createSemanticDemoProject();
   const researchSessionId = createResearchSessionId();
   const logEvent = (eventType: ResearchEvent["eventType"], payload: Record<string, unknown> = {}) => {
     const state = get();
@@ -188,6 +194,9 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   return ({
   project: initialProject,
   activeTool: "pen",
+  sketchSemantic: "main-route",
+  setSketchSemantic: (sketchSemantic) => set({sketchSemantic}),
+  loadSemanticDemo: () => { const state=get(); set({project:createSemanticDemoProject(),editorMode:"intent",activeTool:"select",undoHistory:commit(state.project,state.undoHistory),redoHistory:[]}); },
   selected: null,
   editorMode: "intent",
   editorSubmode: "inspect",
@@ -308,7 +317,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   beginRawStroke: (point) => {
     const state = get();
     const now = Date.now();
-    const stroke = { id: `RAW-${nanoid(6)}`, points: [{ x: point.x, y: point.y, t: now, pressure: point.pressure }], createdAt: now, pointerType: point.pointerType };
+    const stroke = { id: `RAW-${nanoid(6)}`, points: [{ x: point.x, y: point.y, t: now, pressure: point.pressure }], createdAt: now, pointerType: point.pointerType, semanticStyle: state.sketchSemantic };
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, rawStrokes: [...state.project.sketchState.rawStrokes, stroke] } }, draftRawStrokeId: stroke.id, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("freehand_stroke_started", { strokeId: stroke.id, pointerType: point.pointerType ?? "mouse" });
   },
@@ -373,6 +382,13 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, objects: state.project.sketchState.objects.map((object) => object.id === objectId ? { ...object, position: { ...object.position, x: object.position.x + dx, y: object.position.y + dy, time: Date.now() } } : object) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("sketch_object_moved", { objectId, dx, dy });
+  },
+  annotateSketch: (targetId, text) => {
+    const state = get();
+    if (!text.trim() || !state.project.sketchState.assetInstances.some(a => a.id === targetId)) return;
+    const annotation = { id: `SA-${nanoid(8)}`, targetId, text: text.trim(), createdAt: Date.now() };
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, annotations: [...state.project.sketchState.annotations, annotation] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("text_instruction_changed", { annotationId: annotation.id, targetId, text: annotation.text });
   },
   addSketchRelation: (sourceId, targetId, relationType) => {
     const state = get();
