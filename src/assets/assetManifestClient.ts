@@ -55,7 +55,7 @@ Promise<AssetManifest> {
 
   if (!response.ok) {
     throw new Error(
-      "无法读取网页端素材清单。",
+      "Unable to read the web asset manifest.",
     );
   }
 

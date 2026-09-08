@@ -51,7 +51,7 @@ export async function generateInGodot(
 
   } catch {
     throw new Error(
-      "无法连接 Worldloom Bridge。请确认 bridge 程序正在运行。",
+      "Unable to connect to Worldloom Bridge. Make sure the bridge process is running.",
     );
   }
 
@@ -69,9 +69,9 @@ export async function generateInGodot(
   if (!response.ok) {
     throw new Error(
       data.details
-        ? `${data.error ?? "Godot 生成失败"}：${data.details}`
+        ? `${data.error ?? "Godot generation failed"}: ${data.details}`
         : data.error ??
-            "Godot 生成失败。",
+            "Godot generation failed.",
     );
   }
 

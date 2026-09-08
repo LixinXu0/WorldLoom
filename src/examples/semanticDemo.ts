@@ -29,7 +29,7 @@ export function createSemanticDemoProject() {
   p.sketchState.semanticItems=[
     {id:"demo-question",kind:"question",targetId:"demo-enemy_shrine",text:"This branch bypasses the encounter. Should it remain optional?",source:"demo",offset:{x:120,y:-125}},
     {id:"demo-reading",kind:"reading",targetId:"demo-barricade",text:"Possible local challenge zone with a bonus reward.",source:"demo",offset:{x:10,y:-70}},
-    {id:"demo-constraint",kind:"constraint",targetId:"demo-bridge",text:"Bridge: exact asset, approximate placement.",source:"demo",offset:{x:58,y:0}},
+    {id:"demo-constraint",kind:"constraint",targetId:"demo-bridge",text:"Bridge: exact asset, approximate placement.",source:"demo",offset:{x:70,y:-110}},
     {id:"demo-uncertainty",kind:"uncertainty",targetId:"demo-reward_chest",text:"Optional side path? Reward placement is unresolved.",source:"demo",offset:{x:-66,y:0}},
     {id:"demo-conflict",kind:"conflict",targetId:"demo-gate",text:"Enemy stronghold: check whether this gate blocks the main approach.",source:"demo",offset:{x:48,y:18}},
   ];

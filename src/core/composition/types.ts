@@ -6,6 +6,11 @@ export type AssetCompositionAlternative = {
   id: string;
   summary: string;
   rationale: string;
+  name?: string;
+  description?: string;
+  semanticType?: string;
+  confidence?: number;
+  dimensions?: Record<string, number>;
 };
 
 export type AssetCompositionHypothesis = {

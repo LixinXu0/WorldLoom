@@ -86,6 +86,7 @@ export function interpretAssetComposition(sketch: SketchState, utterance: AssetA
     alternatives: [
       { id: "alt-encounter", summary: "Defended high-ground encounter", rationale: "Tower, barricade, shrine, and loop cluster together." },
       { id: "alt-landmark", summary: "Visual landmark cluster", rationale: "The connection could be scenic rather than traversal." },
+      { id: "alt-gameplay", summary: "Gameplay staging area", rationale: "The arrangement may stage a local encounter or reward beat." },
     ],
     clarificationRecommended: clarificationRequests.length > 0 || confidence < 0.78,
     clarificationRequests,

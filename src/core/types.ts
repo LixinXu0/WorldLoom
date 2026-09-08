@@ -306,7 +306,39 @@ export type WorldloomProject = {
   playtestSessions: PlaytestSession[];
   playtestEvents: PlaytestEvent[];
   experienceFeedback: ExperienceFeedback[];
+  wholeLevelState?: WholeLevelState;
+  semanticDimensions?: Record<string, { proposed: number; value: number; adjusted: boolean }>;
+  sharedDesignState?: SharedDesignState;
+  validationIssues?: StructuralIssue[];
+  generationContract?: PlayableGenerationContract;
+  generatedOutput?: {
+    status: "contract_ready" | "success" | "failed";
+    scenePath?: string;
+    generatedAssetCount?: number;
+    generatedAt: number;
+    message?: string;
+  };
+  hiddenSemanticItemIds?: string[];
+  worldSetting?: { text: string; confirmed: boolean; confirmedAt?: number };
+  sketchSubmission?: { status: "draft" | "submitted" | "interpreting" | "candidate" | "committed" | "failed"; submittedAt?: number; screenshot?: string; baselineCanvasState?: string; currentCanvasState?: string; newSketchDiff?: { changedPixelCount: number; boundingBox: unknown | null; strokeIds: string[] }; diff?: { changedPixelCount: number; boundingBox: unknown | null; strokeIds: string[] }; error?: string };
+  mapUnderstandingLocked?: boolean;
+  mapUnderstandingSnapshot?: unknown;
+  mapLayers?: {
+    baseMapVisible: boolean;
+    /** The authoring layer: raw doodles and placed assets. */
+    editVisible: boolean;
+    /** @deprecated Kept for importing projects created before the layer split. */
+    sketchVisible?: boolean;
+    /** Gameplay logic: semantic cards, markers, and relationships. */
+    gameplayVisible: boolean;
+    baseMapUrl?: string;
+    baseMapStatus?: "not_generated" | "generating" | "generated" | "failed";
+  };
 };
+export type WholeLevelState = "editing" | "finalizing" | "needs_validation" | "ready_to_generate" | "generating" | "generated";
+export type StructuralIssue = { id: string; severity: "warning" | "error"; message: string; sourceIds?: string[] };
+export type SharedDesignState = { id: string; committedAssetIds: string[]; spatialConstraints: unknown[]; gameplayConstraints: GameplayConstraint[]; experienceConstraints: string[]; finalizedAt: number };
+export type PlayableGenerationContract = { id: string; spatial_constraints: unknown[]; gameplay_constraints: unknown[]; experience_constraints: string[]; asset_constraints: unknown[]; provenance: unknown[]; createdAt: number; status: "ready" | "submitted" };
 export type EditorMode = "intent" | "review" | "level" | "playtest";
 export type EditorSubmode = "inspect" | "edit" | "compare" | "revisions";
 export type Tool = "select" | "move" | "pen" | "path" | "loop" | "arrow" | "connector" | "annotation" | "group" | "ungroup" | StrokeType | "eraser" | "delete";

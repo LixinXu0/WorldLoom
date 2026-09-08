@@ -2,9 +2,10 @@ import { createSemanticDemoProject } from "../examples/semanticDemo";
 import type { SketchSemantic } from "../core/sketch/semanticStyles";
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject } from "../core/types";
+import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue, PlayableGenerationContract } from "../core/types";
 import type { ClarificationAnswer, InterpretationMode, IntentInterpretationResult, ResearchMode } from "../core/intent/types";
 import type { AssetInstance, SketchMarkKind, SketchObjectType, SketchRelationType } from "../core/sketch/types";
+import type { SemanticItemKind } from "../core/sketch/semanticStyles";
 import { mockAssetLibrary } from "../assets/mockAssetLibrary";
 import type { AssetDefinition } from "../core/sketch/types";
 import { createEmptyProject, createExampleStrokes } from "../examples/exampleProject";
@@ -35,6 +36,9 @@ import { boundsForRawStroke, classifyRawStrokeGesture, nearbyAssetsForStroke } f
 import { buildTrainingExample } from "../research/trainingExample";
 import { calculateResearchMetrics, type ResearchMetrics } from "../research/metrics";
 import { createResearchEvent, createResearchSessionId, exportResearchLog, type ResearchEvent } from "../research/interactionLogger";
+import { buildGenerationContract, dimensionsFromHypothesis, validateDesignState } from "../core/workflow/designState";
+import { requestModelInterpretation, requestGenerationContract } from "../ai/modelClient";
+import { captureStrokeSnapshot } from "../core/image/canvasDiff";
 
 export type WorldloomState = {
   project: WorldloomProject;
@@ -42,6 +46,32 @@ export type WorldloomState = {
   sketchSemantic: SketchSemantic;
   setSketchSemantic: (style: SketchSemantic) => void;
   loadSemanticDemo: () => void;
+  wholeLevelState: WholeLevelState;
+  modelStatus: "idle" | "loading" | "ready" | "error";
+  modelError: string | null;
+  modelSource: "model" | "local-fallback" | "demo";
+  setSemanticDimension: (key: string, value: number) => void;
+  finalizeDesignState: (force?: boolean) => void;
+  validateDesignState: () => void;
+  generateLevelContract: () => void;
+  retryInterpretation: () => void;
+  moveSemanticItem: (id: string, position: { x: number; y: number }, surface?: "card" | "marker") => void;
+  hideSemanticItem: (id: string) => void;
+  deleteSemanticItem: (id: string) => void;
+  reassignSemanticItem: (id: string, targetId: string) => void;
+  convertSemanticItem: (id: string, kind: SemanticItemKind) => void;
+  createSemanticItem: (kind: SemanticItemKind, targetId: string, position?: { x: number; y: number }, text?: string) => void;
+  setWorldSetting: (text: string) => void;
+  confirmWorldSetting: () => void;
+  submitSketch: () => void;
+  clearUnsubmittedSketch: () => void;
+  setMapLayerVisible: (layer: "baseMapVisible" | "editVisible" | "gameplayVisible", visible: boolean) => void;
+  setMapBaseMapUrl: (url: string | undefined) => void;
+  setGeneratedOutput: (output: NonNullable<WorldloomProject["generatedOutput"]>) => void;
+  confirmMapUnderstanding: () => void;
+  unlockMapUnderstanding: () => void;
+  generationContract: PlayableGenerationContract | null;
+  validationIssues: StructuralIssue[];
   selected: SelectedEntity;
   editorMode: EditorMode;
   editorSubmode: EditorSubmode;
@@ -80,17 +110,23 @@ export type WorldloomState = {
   completeRawStroke: () => void;
   deleteRawStroke: (strokeId: string) => void;
   addSketchMark: (kind: SketchMarkKind) => void;
+  deleteSketchMark: (markId: string) => void;
   addSketchObject: (objectType: SketchObjectType | string) => void;
+  deleteSketchObject: (objectId: string) => void;
   moveSketchObject: (objectId: string, dx: number, dy: number) => void;
   annotateSketch: (targetId: string, text: string) => void;
+  deleteSketchAnnotation: (annotationId: string) => void;
   addSketchRelation: (sourceId: string, targetId: string, relationType: SketchRelationType) => void;
   deleteSketchRelation: (relationId: string) => void;
   selectSketchIds: (ids: string[]) => void;
   groupSelectedSketch: () => void;
   ungroupSelectedSketch: () => void;
-  interpretTogether: () => void;
+  interpretTogether: (submission?: { screenshot?: string; diff?: { changedPixelCount: number; boundingBox: unknown | null; strokeIds: string[] } }) => void;
   answerCompositionClarification: (requestId: string, optionId?: string, freeText?: string) => void;
   commitComposition: () => void;
+  selectCompositionCandidate: (candidateId: string) => void;
+  editCompositionCandidate: (candidateId: string, patch: { name?: string; description?: string }) => void;
+  setCustomInterpretation: (name: string, description: string, semanticType?: string) => void;
   generateAssetPlan: () => void;
   applyAssetPlan: () => void;
   rejectAssetPlan: () => void;
@@ -186,6 +222,7 @@ function buildDraft(project: WorldloomProject, variantId: string, before: RoomNo
 export const useWorldloomStore = create<WorldloomState>((set, get) => {
   const initialProject = createSemanticDemoProject();
   const researchSessionId = createResearchSessionId();
+  const movementBaselines = new Map<string, { x: number; y: number }>();
   const logEvent = (eventType: ResearchEvent["eventType"], payload: Record<string, unknown> = {}) => {
     const state = get();
     set({ researchLog: [...state.researchLog, createResearchEvent(state.researchSessionId, projectId(state.project), eventType, payload)] });
@@ -196,7 +233,157 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   activeTool: "pen",
   sketchSemantic: "main-route",
   setSketchSemantic: (sketchSemantic) => set({sketchSemantic}),
-  loadSemanticDemo: () => { const state=get(); set({project:createSemanticDemoProject(),editorMode:"intent",activeTool:"select",undoHistory:commit(state.project,state.undoHistory),redoHistory:[]}); },
+  wholeLevelState: initialProject.wholeLevelState ?? "editing",
+  modelStatus: "idle",
+  modelError: null,
+  modelSource: "demo",
+  generationContract: initialProject.generationContract ?? null,
+  validationIssues: initialProject.validationIssues ?? [],
+  setSemanticDimension: (key, value) => {
+    const state = get();
+    const current = state.project.semanticDimensions ?? {};
+    const previous = current[key] ?? { proposed: value, value, adjusted: false };
+    const nextValue = Math.max(0, Math.min(1, value));
+    const semanticDimensions = { ...current, [key]: { ...previous, value: nextValue, adjusted: true } };
+    set({ project: { ...state.project, semanticDimensions, wholeLevelState: "editing", metadata: { ...state.project.metadata, updatedAt: Date.now() } }, wholeLevelState: "editing" });
+    logEvent("interpretation_adjusted", { dimension: key, value: nextValue, proposed: previous.proposed });
+  },
+  finalizeDesignState: (force = false) => {
+    const state = get();
+    const issues = validateDesignState(state.project);
+    const sharedDesignState = { id: `SHARED-${nanoid(6)}`, committedAssetIds: state.project.committedCompositionIntent?.assetInstanceIds ?? [], spatialConstraints: state.project.sketchState.relations, gameplayConstraints: state.project.constraints, experienceConstraints: state.project.committedCompositionIntent?.experientialGoals ?? [], finalizedAt: Date.now() };
+    const nextState: WholeLevelState = issues.length && !force ? "needs_validation" : "ready_to_generate";
+    const project = { ...state.project, sharedDesignState, validationIssues: issues, wholeLevelState: nextState, metadata: { ...state.project.metadata, updatedAt: Date.now() } };
+    set({ project, wholeLevelState: nextState, validationIssues: issues, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("level_state_finalized", { state: nextState, issueCount: issues.length, forced: force });
+    issues.forEach((issue) => logEvent("structural_conflict_detected", { issueId: issue.id, severity: issue.severity, message: issue.message }));
+  },
+  validateDesignState: () => {
+    const state = get();
+    const issues = validateDesignState(state.project);
+    const nextState: WholeLevelState = issues.length ? "needs_validation" : "ready_to_generate";
+    set({ project: { ...state.project, validationIssues: issues, wholeLevelState: nextState }, wholeLevelState: nextState, validationIssues: issues });
+    issues.forEach((issue) => logEvent("structural_conflict_detected", { issueId: issue.id, severity: issue.severity, message: issue.message }));
+  },
+  generateLevelContract: () => {
+    const state = get();
+    if (state.project.wholeLevelState !== "ready_to_generate" && state.wholeLevelState !== "ready_to_generate") return;
+    const contract = buildGenerationContract(state.project);
+    const project = { ...state.project, generationContract: contract, generatedOutput: { status: "contract_ready" as const, generatedAssetCount: contract.asset_constraints.length, generatedAt: Date.now(), message: "Playable generation contract ready. Rendered scene output is external." }, wholeLevelState: "generated" as const, metadata: { ...state.project.metadata, updatedAt: Date.now() } };
+    set({ project, wholeLevelState: "generated", generationContract: contract });
+    logEvent("generation_started", { contractId: contract.id });
+    logEvent("generation_contract_ready", { contractId: contract.id, assetCount: contract.asset_constraints.length });
+    void requestGenerationContract({ contract }).catch(() => undefined);
+  },
+  retryInterpretation: () => { get().interpretTogether(); },
+  moveSemanticItem: (id, position, surface = "card") => {
+    const state = get();
+    const existingItems = state.project.sketchState.semanticItems ?? [];
+    const generatedQuestion = state.project.compositionHypothesis?.clarificationRequests.find((request) => request.id === id);
+    const generatedReading = state.project.compositionHypothesis && id === `${state.project.compositionHypothesis.id}reading`;
+    const item = existingItems.find((entry) => entry.id === id) ?? (generatedQuestion ? { id, kind: "question" as const, targetId: generatedQuestion.targetSketchIds[0] ?? state.project.sketchSelection.ids[0] ?? "", text: generatedQuestion.question, source: "ai_generated" as const, offset: { x: 70, y: 0 } } : generatedReading ? { id, kind: "reading" as const, targetId: state.project.compositionHypothesis!.assetRoles[0]?.assetInstanceId ?? "", text: state.project.compositionHypothesis!.summary, source: "ai_generated" as const, offset: { x: 65, y: 60 } } : undefined);
+    if (!item) return;
+    const nextItems = existingItems.some((entry) => entry.id === id) ? existingItems.map((entry) => entry.id === id ? { ...entry, visualPosition: { x: position.x, y: position.y } } : entry) : [...existingItems, { ...item, visualPosition: { x: position.x, y: position.y } }];
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, semanticItems: nextItems } } });
+    logEvent(surface === "marker" ? "marker_moved" : "ai_card_moved", { semanticItemId: id, position });
+  },
+  hideSemanticItem: (id) => {
+    const state = get();
+    const hiddenSemanticItemIds = Array.from(new Set([...(state.project.hiddenSemanticItemIds ?? []), id]));
+    set({ project: { ...state.project, hiddenSemanticItemIds } });
+  },
+  deleteSemanticItem: (id) => {
+    const state = get();
+    const item = (state.project.sketchState.semanticItems ?? []).find((entry) => entry.id === id);
+    const hiddenSemanticItemIds = Array.from(new Set([...(state.project.hiddenSemanticItemIds ?? []), id]));
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, semanticItems: (state.project.sketchState.semanticItems ?? []).filter((entry) => entry.id !== id) }, hiddenSemanticItemIds } });
+    if (item) logEvent("marker_deleted", { semanticItemId: id, kind: item.kind });
+  },
+  reassignSemanticItem: (id, targetId) => {
+    const state = get();
+    if (!state.project.sketchState.assetInstances.some((asset) => asset.id === targetId)) return;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, semanticItems: (state.project.sketchState.semanticItems ?? []).map((item) => item.id === id ? { ...item, targetId, visualPosition: undefined } : item) } } });
+    logEvent("ai_question_reopened", { semanticItemId: id, targetId });
+  },
+  convertSemanticItem: (id, kind) => {
+    const state = get();
+    const item = (state.project.sketchState.semanticItems ?? []).find((entry) => entry.id === id);
+    if (!item) return;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, semanticItems: (state.project.sketchState.semanticItems ?? []).map((entry) => entry.id === id ? { ...entry, kind, status: kind === "constraint" ? "committed" as const : "open" as const } : entry) } } });
+    if (kind === "constraint") logEvent("constraint_note_created", { semanticItemId: id });
+  },
+  createSemanticItem: (kind, targetId, position, text) => {
+    const state = get();
+    const target = state.project.sketchState.assetInstances.find((asset) => asset.id === targetId) ?? state.project.sketchState.assetInstances[0];
+    if (!target) return;
+    const item = { id: `SEM-${nanoid(7)}`, kind, targetId: target.id, text: text ?? (kind === "question" ? "What should this element mean in the level?" : kind === "reading" ? "Candidate reading: a meaningful spatial role." : "User constraint note: preserve this relationship."), source: "user_created" as const, offset: { x: 70, y: 0 }, visualPosition: position ?? { x: target.position.x + 70, y: target.position.y }, status: kind === "reading" ? "candidate" as const : "open" as const };
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, semanticItems: [...(state.project.sketchState.semanticItems ?? []), item] }, hiddenSemanticItemIds: (state.project.hiddenSemanticItemIds ?? []).filter((id) => id !== item.id) } });
+    logEvent("ai_card_created", { semanticItemId: item.id, kind, source: "user_created", targetId: item.targetId });
+    if (kind === "question") logEvent("ai_question_generated", { semanticItemId: item.id, source: "user_created" });
+    if (kind === "constraint") logEvent("constraint_note_created", { semanticItemId: item.id, source: "user_created" });
+  },
+  loadSemanticDemo: () => { const state=get(); const project=createSemanticDemoProject(); set({project,editorMode:"intent",activeTool:"select",wholeLevelState:project.wholeLevelState??"editing",generationContract:project.generationContract??null,validationIssues:project.validationIssues??[],modelStatus:"idle",modelError:null,modelSource:"demo",undoHistory:commit(state.project,state.undoHistory),redoHistory:[]}); },
+  setWorldSetting: (text) => {
+    const state = get();
+    set({ project: { ...state.project, worldSetting: { text, confirmed: false } } });
+  },
+  confirmWorldSetting: () => {
+    const state = get();
+    const current = state.project.worldSetting ?? { text: "", confirmed: false };
+    set({ project: { ...state.project, worldSetting: { ...current, confirmed: true, confirmedAt: Date.now() } } });
+    logEvent("text_instruction_changed", { source: "world_setting_confirmed", length: current.text.length });
+  },
+  submitSketch: () => {
+    const state = get();
+    let screenshot: string | undefined;
+    try { screenshot = captureStrokeSnapshot(state.project.sketchState.rawStrokes, state.project.metadata.canvasWidth, state.project.metadata.canvasHeight); } catch { screenshot = undefined; }
+    const strokeIds = state.project.sketchState.rawStrokes.filter((stroke) => !stroke.deleted).map((stroke) => stroke.id);
+    const previous = state.project.sketchSubmission;
+    const baselineStrokeIds = new Set(previous?.diff?.strokeIds ?? []);
+    const newStrokeIds = strokeIds.filter((id) => !baselineStrokeIds.has(id));
+    const diff = { changedPixelCount: newStrokeIds.length ? newStrokeIds.length : (strokeIds.length ? 1 : 0), boundingBox: null, strokeIds: newStrokeIds.length ? newStrokeIds : strokeIds };
+    const sketchSubmission = { status: "submitted" as const, submittedAt: Date.now(), screenshot, baselineCanvasState: previous?.currentCanvasState ?? previous?.screenshot, currentCanvasState: screenshot, newSketchDiff: diff, diff };
+    set({ project: { ...state.project, sketchSubmission }, modelStatus: "loading", modelError: null, modelSource: "local-fallback" });
+    logEvent("interpret_selection_requested", { source: "submit_sketch", strokeIds });
+    get().interpretTogether({ screenshot, diff: sketchSubmission.diff });
+  },
+  clearUnsubmittedSketch: () => {
+    const state = get();
+    const submitted = new Set(state.project.sketchSubmission?.diff?.strokeIds ?? []);
+    const rawStrokes = state.project.sketchState.rawStrokes.filter((stroke) => submitted.has(stroke.id) || stroke.deleted);
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, rawStrokes }, sketchSubmission: { status: "draft" } } });
+  },
+  setMapLayerVisible: (layer, visible) => {
+    const state = get();
+    const current = state.project.mapLayers;
+    const mapLayers = {
+      baseMapVisible: current?.baseMapVisible ?? false,
+      editVisible: current?.editVisible ?? current?.sketchVisible ?? true,
+      gameplayVisible: current?.gameplayVisible ?? true,
+      baseMapUrl: current?.baseMapUrl,
+      baseMapStatus: current?.baseMapStatus ?? "not_generated",
+      [layer]: visible,
+    };
+    set({ project: { ...state.project, mapLayers } });
+  },
+  setMapBaseMapUrl: (url) => {
+    const state = get();
+    const current = state.project.mapLayers;
+    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, baseMapUrl: url, baseMapStatus: url ? "generated" : "not_generated" } } });
+  },
+  setGeneratedOutput: (output) => {
+    const state = get();
+    const wholeLevelState = output.status === "failed" ? state.project.wholeLevelState ?? "editing" : "generated";
+    set({ project: { ...state.project, generatedOutput: output, wholeLevelState }, wholeLevelState });
+    logEvent(output.status === "failed" ? "structural_conflict_detected" : "generation_contract_ready", { source: "generated_output", status: output.status, scenePath: output.scenePath });
+  },
+  confirmMapUnderstanding: () => {
+    const state = get();
+    const snapshot = { id: `MAP-${nanoid(7)}`, confirmedAt: Date.now(), worldSetting: state.project.worldSetting?.text ?? "", elements: state.project.sketchState.assetInstances.map((asset) => ({ id: asset.id, type: asset.assetDefinitionId, position: asset.position, roles: asset.roleAssignments })), routes: state.project.sketchState.rawStrokes.filter((stroke) => !stroke.deleted).map((stroke) => ({ id: stroke.id, points: stroke.points, semanticStyle: stroke.semanticStyle })) };
+    set({ project: { ...state.project, mapUnderstandingSnapshot: snapshot, mapUnderstandingLocked: true } });
+    logEvent("level_state_finalized", { source: "map_understanding_confirmed", elementCount: snapshot.elements.length });
+  },
+  unlockMapUnderstanding: () => { const state = get(); set({ project: { ...state.project, mapUnderstandingLocked: false } }); },
   selected: null,
   editorMode: "intent",
   editorSubmode: "inspect",
@@ -281,8 +468,16 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
     if (!asset || asset.locked) return;
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? { ...item, position: { ...item.position, x: item.position.x + dx, y: item.position.y + dy, time: Date.now() } } : item) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const semanticItems = state.project.sketchState.semanticItems ?? [];
+    const nextPosition = { x: asset.position.x + dx, y: asset.position.y + dy };
+    const baseline = movementBaselines.get(assetInstanceId) ?? { x: asset.position.x, y: asset.position.y };
+    const meaningfulChange = Math.hypot(nextPosition.x - baseline.x, nextPosition.y - baseline.y) > 28;
+    const createdMarker = meaningfulChange && !semanticItems.some((item) => item.kind === "question" && item.targetId === assetInstanceId);
+    const nextSemanticItems = createdMarker ? [...semanticItems, { id: `MOVE-${assetInstanceId}`, kind: "question" as const, targetId: assetInstanceId, text: "This spatial change may alter the element's role. Ask the model to re-interpret it?", source: "auto_detected" as const, offset: { x: 70, y: 0 }, visualPosition: { x: nextPosition.x + 70, y: nextPosition.y }, status: "open" as const }] : semanticItems;
+    if (meaningfulChange) movementBaselines.set(assetInstanceId, nextPosition);
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? { ...item, position: { ...item.position, x: item.position.x + dx, y: item.position.y + dy, time: Date.now() } } : item), semanticItems: nextSemanticItems } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("asset_moved", { assetInstanceId, dx, dy });
+    if (createdMarker) { logEvent("ai_marker_created", { semanticItemId: `MOVE-${assetInstanceId}`, source: "auto_detected", trigger: "meaningful_asset_move" }); logEvent("ai_question_generated", { semanticItemId: `MOVE-${assetInstanceId}` }); }
   },
   rotateAssetInstance: (assetInstanceId, degrees) => {
     const state = get();
@@ -311,8 +506,15 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
     if (!asset || asset.locked) return;
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.filter((item) => item.id !== assetInstanceId), relations: state.project.sketchState.relations.filter((relation) => relation.sourceId !== assetInstanceId && relation.targetId !== assetInstanceId) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== assetInstanceId) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const hadCommittedReference = Boolean(state.project.committedCompositionIntent?.assetInstanceIds.includes(assetInstanceId));
+    const validationIssues = hadCommittedReference ? [...(state.project.validationIssues ?? []).filter((issue) => issue.id !== `deleted-${assetInstanceId}`), { id: `deleted-${assetInstanceId}`, severity: "error" as const, message: `Committed element ${assetInstanceId} was deleted; re-check the shared design state.`, sourceIds: [assetInstanceId] }] : (state.project.validationIssues ?? []);
+    const remainingAssets = state.project.sketchState.assetInstances.filter((item) => item.id !== assetInstanceId);
+    const semanticItems = (state.project.sketchState.semanticItems ?? []).filter((item) => item.targetId !== assetInstanceId);
+    if (hadCommittedReference && remainingAssets[0]) semanticItems.push({ id: `DELETE-${assetInstanceId}`, kind: "question", targetId: remainingAssets[0].id, text: `Structural warning: ${assetInstanceId} was committed but deleted. Reassign or redraw the dependency.`, source: "model", offset: { x: 70, y: 0 } });
+    const project = { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: remainingAssets, relations: state.project.sketchState.relations.filter((relation) => relation.sourceId !== assetInstanceId && relation.targetId !== assetInstanceId), annotations: state.project.sketchState.annotations.filter((note) => note.targetId !== assetInstanceId), semanticItems, groups: state.project.sketchState.groups.map((group) => ({ ...group, memberIds: group.memberIds.filter((id) => id !== assetInstanceId) })).filter((group) => group.memberIds.length > 0) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== assetInstanceId) }, validationIssues, wholeLevelState: hadCommittedReference ? "needs_validation" as const : state.project.wholeLevelState };
+    set({ project, wholeLevelState: project.wholeLevelState ?? "editing", validationIssues, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("asset_deleted", { assetInstanceId });
+    if (hadCommittedReference) logEvent("structural_conflict_detected", { issueId: `deleted-${assetInstanceId}`, sourceIds: [assetInstanceId] });
   },
   beginRawStroke: (point) => {
     const state = get();
@@ -372,11 +574,25 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     };
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, marks: [...state.project.sketchState.marks, mark] }, sketchSelection: { ids: [mark.id] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
   },
+  deleteSketchMark: (markId) => {
+    const state = get();
+    const mark = state.project.sketchState.marks.find((item) => item.id === markId);
+    if (!mark) return;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, marks: state.project.sketchState.marks.filter((item) => item.id !== markId) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== markId) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("sketch_mark_deleted", { markId, kind: mark.kind });
+  },
   addSketchObject: (objectType) => {
     const state = get();
     const object = { id: `SO-${nanoid(5)}`, objectType, position: { x: 250 + state.project.sketchState.objects.length * 42, y: 250, time: Date.now() }, label: String(objectType) };
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, objects: [...state.project.sketchState.objects, object] }, sketchSelection: { ids: [object.id] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("sketch_object_created", { objectId: object.id, objectType });
+  },
+  deleteSketchObject: (objectId) => {
+    const state = get();
+    const object = state.project.sketchState.objects.find((item) => item.id === objectId);
+    if (!object) return;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, objects: state.project.sketchState.objects.filter((item) => item.id !== objectId) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== objectId) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("sketch_object_deleted", { objectId });
   },
   moveSketchObject: (objectId, dx, dy) => {
     const state = get();
@@ -390,16 +606,28 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, annotations: [...state.project.sketchState.annotations, annotation] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("text_instruction_changed", { annotationId: annotation.id, targetId, text: annotation.text });
   },
+  deleteSketchAnnotation: (annotationId) => {
+    const state = get();
+    const annotation = state.project.sketchState.annotations.find((item) => item.id === annotationId);
+    if (!annotation) return;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, annotations: state.project.sketchState.annotations.filter((item) => item.id !== annotationId) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== annotationId) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("sketch_annotation_deleted", { annotationId });
+  },
   addSketchRelation: (sourceId, targetId, relationType) => {
     const state = get();
     if (!sourceId || !targetId || sourceId === targetId) return;
     const relation = { id: `SR-${nanoid(5)}`, sourceId, targetId, relationType, directed: relationType === "leads_to" };
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, relations: [...state.project.sketchState.relations, relation] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const shouldQuestion = relationType === "leads_to" || relationType === "gates";
+    const semanticItems = state.project.sketchState.semanticItems ?? [];
+    const markerId = `REL-${relation.id}`;
+    const nextItems = shouldQuestion && !semanticItems.some((item) => item.id === markerId) ? [...semanticItems, { id: markerId, kind: "question" as const, targetId, text: relationType === "gates" ? "This connection introduces a gate dependency. Should the route remain blocked?" : "This branch connection may change route priority. Should it remain optional?", source: "auto_detected" as const, offset: { x: 70, y: 0 }, visualPosition: { x: (state.project.sketchState.assetInstances.find(a=>a.id===targetId)?.position.x ?? 0) + 70, y: state.project.sketchState.assetInstances.find(a=>a.id===targetId)?.position.y ?? 0 }, status: "open" as const }] : semanticItems;
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, relations: [...state.project.sketchState.relations, relation], semanticItems: nextItems } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("relation_created", { relationId: relation.id, sourceId, targetId, relationType });
+    if (shouldQuestion) { logEvent("ai_marker_created", { semanticItemId: markerId, source: "auto_detected", trigger: relationType }); logEvent("ai_question_generated", { semanticItemId: markerId }); }
   },
   deleteSketchRelation: (relationId) => {
     const state = get();
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, relations: state.project.sketchState.relations.filter((relation) => relation.id !== relationId) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, relations: state.project.sketchState.relations.filter((relation) => relation.id !== relationId), semanticItems: (state.project.sketchState.semanticItems ?? []).filter((item) => item.id !== `REL-${relationId}`) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("relation_deleted", { relationId });
   },
   selectSketchIds: (ids) => set((state) => ({ project: { ...state.project, sketchSelection: { ids } } })),
@@ -419,7 +647,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, groups: state.project.sketchState.groups.filter((group) => !selected.has(group.id)) }, sketchSelection: { ids: removed.flatMap((group) => group.memberIds) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     removed.forEach((group) => logEvent("assets_ungrouped", { groupId: group.id, memberIds: group.memberIds }));
   },
-  interpretTogether: () => {
+  interpretTogether: (submission) => {
     const state = get();
     const fallbackIds = [
       ...state.project.sketchState.assetInstances.map((asset) => asset.id),
@@ -435,11 +663,41 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const conventions = state.project.researchMode === "c3-ai-negotiable-conventions" ? state.project.conventions : [];
     const hypothesis = interpretAssetComposition(sketchState, utterance, conventions);
     const nextSketchState = { ...sketchState, utterances: sketchState.utterances.map((item) => item.id === utterance.id ? { ...item, status: hypothesis.status === "clarifying" ? "clarifying" as const : "candidate" as const } : item) };
-    set({ project: { ...state.project, sketchState: nextSketchState, compositionHypothesis: hypothesis, committedCompositionIntent: null, assetEditPlan: null, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, editorMode: "review" });
+    set({ project: { ...state.project, sketchState: nextSketchState, compositionHypothesis: hypothesis, committedCompositionIntent: null, assetEditPlan: null, semanticDimensions: dimensionsFromHypothesis(hypothesis), wholeLevelState: "editing", sketchSubmission: submission ? { status: "interpreting" as const, submittedAt: state.project.sketchSubmission?.submittedAt ?? Date.now(), screenshot: submission.screenshot, diff: submission.diff } : state.project.sketchSubmission, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, editorMode: "review", modelStatus: "loading", modelError: null, modelSource: "local-fallback", wholeLevelState: "editing" });
     logEvent("composition_hypothesis_returned", { hypothesisId: hypothesis.id, utteranceId: utterance.id, confidence: hypothesis.confidence, summary: hypothesis.summary });
     hypothesis.assetRoles.forEach((role) => logEvent("asset_role_proposed", role));
     hypothesis.clarificationRequests.forEach((request) => logEvent("clarification_shown", { requestId: request.id, reason: request.reason, targetSketchIds: request.targetSketchIds }));
     if (hypothesis.conventionMatchedId) logEvent("convention_detected", { conventionId: hypothesis.conventionMatchedId, utteranceId: utterance.id });
+    const context = {
+      utterance,
+      screenshot: submission?.screenshot,
+      sketchDiff: submission?.diff,
+      worldSetting: state.project.worldSetting,
+      assets: sketchState.assetInstances.map((asset) => ({ id: asset.id, definitionId: asset.assetDefinitionId, position: asset.position, locked: asset.locked, preserve: asset.preserve, roles: asset.roleAssignments })),
+      routes: sketchState.rawStrokes.filter((stroke) => !stroke.deleted).map((stroke) => ({ id: stroke.id, semanticStyle: stroke.semanticStyle, points: stroke.points })),
+      marks: sketchState.marks,
+      relations: sketchState.relations,
+      annotations: sketchState.annotations,
+      localHypothesis: { summary: hypothesis.summary, confidence: hypothesis.confidence, roles: hypothesis.assetRoles.map((role) => role.proposedRole) },
+    };
+    void requestModelInterpretation(context).then((model) => {
+      const current = get();
+      if (current.project.compositionHypothesis?.utteranceId !== utterance.id) return;
+      const modelCandidates = model.candidates ?? [];
+      const alternatives = modelCandidates.length ? modelCandidates.map((item, index) => ({ id: `model-alt-${index}`, name: item.name ?? "Candidate", semanticType: item.type ?? "environment", description: item.description ?? "", confidence: typeof item.confidence === "number" ? item.confidence : undefined, dimensions: item.dimensions, summary: `${item.name ?? "Candidate"}${item.type ? ` · ${item.type}` : ""}: ${item.description ?? ""}`, rationale: `Confidence ${Math.round((item.confidence ?? 0) * 100)}%` })) : (model.alternative_readings ?? []).map((item, index) => ({ id: `model-alt-${index}`, name: item.label ?? "Alternative reading", description: item.summary ?? "", summary: item.summary ?? item.label ?? "Alternative reading", rationale: item.rationale ?? "Model-proposed alternative" }));
+      const questions = (model.questions ?? []).map((item, index) => ({ id: `model-q-${index}`, targetSketchIds: selection, reason: "semantic_ambiguity" as const, question: typeof item === "string" ? item : item.question ?? "What should this element mean?", options: [], allowFreeText: true }));
+      const localDimensions = current.project.semanticDimensions ?? {};
+      const semanticDimensions = { ...localDimensions };
+      Object.entries(model.dimensions ?? {}).forEach(([key, value]) => { const prior = semanticDimensions[key] ?? { proposed: value, value, adjusted: false }; semanticDimensions[key] = { ...prior, proposed: Math.max(0, Math.min(1, Number(value))), value: prior.adjusted ? prior.value : Math.max(0, Math.min(1, Number(value))) }; });
+      modelCandidates.forEach((candidate) => Object.entries(candidate.dimensions ?? {}).forEach(([key, value]) => { const prior = semanticDimensions[key] ?? { proposed: value, value, adjusted: false }; semanticDimensions[key] = { ...prior, proposed: Math.max(0, Math.min(1, Number(value))), value: prior.adjusted ? prior.value : Math.max(0, Math.min(1, Number(value))) }; }));
+      const nextHypothesis = { ...current.project.compositionHypothesis!, summary: model.summary ?? current.project.compositionHypothesis!.summary, confidence: typeof model.confidence === "number" ? Math.max(0, Math.min(1, model.confidence)) : current.project.compositionHypothesis!.confidence, alternatives: alternatives.length ? alternatives : model.title ? [{ id: "model-title", summary: model.title, rationale: "Model title" }] : current.project.compositionHypothesis!.alternatives, clarificationRequests: questions.length ? questions : current.project.compositionHypothesis!.clarificationRequests };
+      set({ project: { ...current.project, compositionHypothesis: nextHypothesis, semanticDimensions, sketchSubmission: current.project.sketchSubmission ? { ...current.project.sketchSubmission, status: "candidate" as const } : current.project.sketchSubmission }, modelStatus: "ready", modelError: null, modelSource: "model" });
+      logEvent("composition_hypothesis_returned", { hypothesisId: nextHypothesis.id, utteranceId: utterance.id, source: "model", confidence: nextHypothesis.confidence });
+    }).catch((error: unknown) => {
+      const current = get();
+      if (current.project.compositionHypothesis?.utteranceId !== utterance.id) return;
+      set({ project: { ...current.project, sketchSubmission: current.project.sketchSubmission ? { ...current.project.sketchSubmission, status: "failed" as const, error: error instanceof Error ? error.message : "Model request failed" } : current.project.sketchSubmission }, modelStatus: "error", modelError: error instanceof Error ? error.message : "Model request failed", modelSource: "local-fallback" });
+    });
   },
   answerCompositionClarification: (requestId, optionId, freeText) => {
     const state = get();
@@ -458,6 +716,35 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     set({ project: { ...state.project, compositionHypothesis: next } });
     logEvent("clarification_answered", { requestId, optionId, freeText });
   },
+  selectCompositionCandidate: (candidateId) => {
+    const state = get();
+    const hypothesis = state.project.compositionHypothesis;
+    const candidate = hypothesis?.alternatives.find((item) => item.id === candidateId);
+    if (!hypothesis || !candidate) return;
+    set({ project: { ...state.project, compositionHypothesis: { ...hypothesis, summary: candidate.summary, alternatives: [candidate, ...hypothesis.alternatives.filter((item) => item.id !== candidateId)] } } });
+    logEvent("interpretation_alternative_selected", { candidateId, hypothesisId: hypothesis.id });
+  },
+  editCompositionCandidate: (candidateId, patch) => {
+    const state = get();
+    const hypothesis = state.project.compositionHypothesis;
+    if (!hypothesis) return;
+    const alternatives = hypothesis.alternatives.map((candidate) => {
+      if (candidate.id !== candidateId) return candidate;
+      const name = patch.name ?? candidate.name ?? candidate.summary.split(" · ")[0].split(":")[0];
+      const description = patch.description ?? candidate.description ?? candidate.summary.split(":").slice(1).join(":").trim();
+      return { ...candidate, name, description, summary: `${name}${candidate.semanticType ? ` · ${candidate.semanticType}` : ""}: ${description}`, rationale: "User edited candidate" };
+    });
+    set({ project: { ...state.project, compositionHypothesis: { ...hypothesis, alternatives } } });
+    logEvent("interpretation_adjusted", { source: "user_candidate_edit", candidateId });
+  },
+  setCustomInterpretation: (name, description, semanticType) => {
+    const state = get();
+    const hypothesis = state.project.compositionHypothesis;
+    if (!hypothesis || !name.trim()) return;
+    const summary = `${name.trim()}${semanticType ? ` · ${semanticType}` : ""}: ${description.trim()}`;
+    set({ project: { ...state.project, compositionHypothesis: { ...hypothesis, summary, alternatives: [{ id: `custom-${hypothesis.id}`, summary, rationale: "User-defined interpretation" }, ...hypothesis.alternatives] } } });
+    logEvent("interpretation_adjusted", { source: "user_defined", hypothesisId: hypothesis.id });
+  },
   commitComposition: () => {
     const state = get();
     const hypothesis = state.project.compositionHypothesis;
@@ -465,8 +752,9 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const committedCompositionIntent = commitCompositionIntent(hypothesis, state.project.sketchState);
     const sketchState = { ...state.project.sketchState, utterances: state.project.sketchState.utterances.map((utterance) => utterance.id === hypothesis.utteranceId ? { ...utterance, status: "committed" as const } : utterance) };
     const compositionHypothesis = { ...hypothesis, status: "committed" as const };
-    set({ project: { ...state.project, sketchState, compositionHypothesis, committedCompositionIntent, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    set({ project: { ...state.project, sketchState, compositionHypothesis, committedCompositionIntent, wholeLevelState: "editing", sketchSubmission: state.project.sketchSubmission ? { ...state.project.sketchSubmission, status: "committed" as const } : state.project.sketchSubmission, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, wholeLevelState: "editing", undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("composition_committed", { hypothesisId: hypothesis.id, compositionIntentId: committedCompositionIntent.id });
+    logEvent("interpretation_committed", { hypothesisId: hypothesis.id, compositionIntentId: committedCompositionIntent.id });
   },
   generateAssetPlan: () => {
     const state = get();
@@ -508,7 +796,8 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const marks = demo === "high-ground" ? [loop, arrow] : [loop];
     const relations = demo === "high-ground" ? [{ id: "SR-demo-stair-tower", sourceId: "AI-stone_stair", targetId: "AI-watchtower", relationType: "related_to" as const, directed: true }] : [];
     const selection = demo === "high-ground" ? ["AI-watchtower", "AI-barricade", "AI-enemy_shrine", "AI-stone_stair", "SM-demo-loop", "SM-demo-arrow"] : assetInstances.map((asset) => asset.id).concat(marks.map((mark) => mark.id));
-    set({ project: { ...base, name: demo === "high-ground" ? "Demo A - High-Ground Encounter" : demo === "gated-recovery" ? "Demo B - Gated Recovery Area" : "Demo C - Optional Detour", sketchState: { ...base.sketchState, assetInstances, marks, relations }, sketchSelection: { ids: selection } }, selected: null, editorMode: "intent", editorSubmode: "inspect", undoHistory: [], redoHistory: [] });
+    const project = { ...base, name: demo === "high-ground" ? "Demo A - High-Ground Encounter" : demo === "gated-recovery" ? "Demo B - Gated Recovery Area" : "Demo C - Optional Detour", sketchState: { ...base.sketchState, assetInstances, marks, relations }, sketchSelection: { ids: selection }, wholeLevelState: "editing" as const, semanticDimensions: {}, validationIssues: [] };
+    set({ project, selected: null, editorMode: "intent", editorSubmode: "inspect", wholeLevelState: "editing", generationContract: null, validationIssues: [], modelStatus: "idle", modelError: null, modelSource: "demo", undoHistory: [], redoHistory: [] });
     logEvent("asset_instance_created", { demo, count: assetInstances.length });
   },
   answerClarificationRequest: (requestId, optionId, freeText) => {
@@ -679,12 +968,13 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const constraints = compileConstraints(project.strokes);
     const conflicts = detectConflicts(project.strokes, constraints);
     const interpretationResult = interpretRuleBasedSync({ strokes: project.strokes });
-    set({ project: { ...project, sketchState: createSketchStateFromStrokes(project.strokes), constraints, conflicts, authoringIntent: interpretationResult.authoringIntent, lastInterpretationResult: interpretationResult }, selected: null, editorMode: "review", editorSubmode: "inspect", undoHistory: [], redoHistory: [], importError: null });
+    const nextProject = { ...project, sketchState: createSketchStateFromStrokes(project.strokes), constraints, conflicts, authoringIntent: interpretationResult.authoringIntent, lastInterpretationResult: interpretationResult, wholeLevelState: "editing" as const, semanticDimensions: {}, validationIssues: [] };
+    set({ project: nextProject, selected: null, editorMode: "review", editorSubmode: "inspect", wholeLevelState: "editing", generationContract: null, validationIssues: [], modelStatus: "idle", modelError: null, modelSource: "local-fallback", undoHistory: [], redoHistory: [], importError: null });
   },
   importJson: (text) => {
     const result = importProjectJson(text);
     if (!result.ok) set({ importError: result.error });
-    else set({ project: result.project, selected: null, importError: null, undoHistory: [], redoHistory: [], editorMode: result.project.variants.length > 0 ? "level" : result.project.constraints.length > 0 ? "review" : "intent" });
+    else set({ project: result.project, selected: null, importError: null, wholeLevelState: result.project.wholeLevelState ?? "editing", generationContract: result.project.generationContract ?? null, validationIssues: result.project.validationIssues ?? [], modelStatus: "idle", modelError: null, modelSource: result.project.generationContract ? "model" : "local-fallback", undoHistory: [], redoHistory: [], editorMode: result.project.variants.length > 0 ? "level" : result.project.constraints.length > 0 ? "review" : "intent" });
   },
   beginRoomEdit: (variantId, roomId, patch, property) => {
     const state = get();
@@ -805,14 +1095,14 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     const previous = state.undoHistory[state.undoHistory.length - 1];
     if (!previous) return;
-    set({ project: previous, undoHistory: state.undoHistory.slice(0, -1), redoHistory: [...state.redoHistory, snapshot(state.project)], selected: null, draftRoomEdit: null, impactPreview: null });
+    set({ project: previous, wholeLevelState: previous.wholeLevelState ?? "editing", generationContract: previous.generationContract ?? null, validationIssues: previous.validationIssues ?? [], undoHistory: state.undoHistory.slice(0, -1), redoHistory: [...state.redoHistory, snapshot(state.project)], selected: null, draftRoomEdit: null, impactPreview: null });
     logEvent("undo");
   },
   redo: () => {
     const state = get();
     const next = state.redoHistory[state.redoHistory.length - 1];
     if (!next) return;
-    set({ project: next, redoHistory: state.redoHistory.slice(0, -1), undoHistory: [...state.undoHistory, snapshot(state.project)], selected: null });
+    set({ project: next, wholeLevelState: next.wholeLevelState ?? "editing", generationContract: next.generationContract ?? null, validationIssues: next.validationIssues ?? [], redoHistory: state.redoHistory.slice(0, -1), undoHistory: [...state.undoHistory, snapshot(state.project)], selected: null });
     logEvent("redo");
   },
   });

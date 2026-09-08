@@ -24,11 +24,17 @@ GODOT_PROJECT_PATH = Path(
     r"C:\2\CHI\test1\worldloom-godot-test"
 )
 
+# Keep the requested install path first, with a fallback for the unpacked
+# Godot archive layout currently present on this machine.
 GODOT_EXECUTABLE = Path(
-    r"C:\2\CHI\godot"
-    r"\Godot_v4.7.1-stable_win64.exe"
-    r"\Godot_v4.7.1-stable_win64.exe"
+    r"D:\Downloads\Godot\_v4.7.1-stable\_win64.exe"
 )
+if not GODOT_EXECUTABLE.is_file():
+    unpacked_executable = Path(
+        r"D:\Downloads\Godot_v4.7.1-stable_win64.exe\Godot_v4.7.1-stable_win64.exe"
+    )
+    if unpacked_executable.is_file():
+        GODOT_EXECUTABLE = unpacked_executable
 
 MAP_OUTPUT_PATH = (
     GODOT_PROJECT_PATH
@@ -463,8 +469,8 @@ def infer_texture_category(
                 "ground",
                 "floor",
                 "tile",
-                "地面",
-                "地形",
+                "ground",
+                "terrain",
             ),
         ),
         (
@@ -473,8 +479,8 @@ def infer_texture_category(
                 "path",
                 "road",
                 "rail",
-                "道路",
-                "路径",
+                "road",
+                "path",
             ),
         ),
         (
@@ -484,8 +490,8 @@ def infer_texture_category(
                 "player",
                 "npc",
                 "enemy",
-                "角色",
-                "敌人",
+                "character",
+                "enemy",
             ),
         ),
         (
@@ -494,8 +500,8 @@ def infer_texture_category(
                 "building",
                 "house",
                 "tower",
-                "建筑",
-                "房屋",
+                "building",
+                "house",
             ),
         ),
         (
@@ -504,8 +510,8 @@ def infer_texture_category(
                 "wall",
                 "rock",
                 "barrier",
-                "障碍",
-                "墙",
+                "obstacle",
+                "wall",
             ),
         ),
     ]

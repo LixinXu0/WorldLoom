@@ -1,6 +1,7 @@
 import {
   useDoodleInterpretationStore,
 } from "../../store/useDoodleInterpretationStore";
+import { useWorldloomStore } from "../../store/useWorldloomStore";
 
 
 const MAX_LENGTH = 600;
@@ -11,9 +12,12 @@ export function WorldSettingPanel() {
     worldSetting,
     setWorldSetting,
   } = useDoodleInterpretationStore();
+  const { project, setWorldSetting: setProjectWorldSetting, confirmWorldSetting } = useWorldloomStore();
+  const value = project.worldSetting?.text ?? worldSetting;
 
   return (
     <section
+      className="world-setting-panel"
       style={{
         display: "grid",
         gap: "8px",
@@ -24,7 +28,7 @@ export function WorldSettingPanel() {
       }}
     >
       <div>
-        <h3>整体背景设定</h3>
+        <h3>World Setting</h3>
 
         <p
           style={{
@@ -32,21 +36,17 @@ export function WorldSettingPanel() {
             lineHeight: 1.5,
           }}
         >
-          可选。描述地图的时代、世界观、美术风格、色彩或氛围。
+          Optional. Describe the era, world, art direction, colors, or mood.
         </p>
       </div>
 
       <textarea
-        value={worldSetting}
+        value={value}
         maxLength={MAX_LENGTH}
         placeholder={
-          "例如：中世纪奇幻世界，柔和的手绘水彩风格，以森林绿色和石灰色为主，整体安静但略带神秘感。"
+          "Example: a medieval fantasy world with a soft hand-painted watercolor style, forest green and limestone tones, and a quiet, mysterious mood."
         }
-        onChange={(event) =>
-          setWorldSetting(
-            event.target.value,
-          )
-        }
+        onChange={(event) => { setWorldSetting(event.target.value); setProjectWorldSetting(event.target.value); }}
         style={{
           width: "100%",
           minHeight: "130px",
@@ -73,13 +73,15 @@ export function WorldSettingPanel() {
         }}
       >
         <span>
-          留空时使用默认生成风格
+          Leave blank to use the default generation style
         </span>
 
         <span>
-          {worldSetting.length}/{MAX_LENGTH}
+          {value.length}/{MAX_LENGTH}
         </span>
       </div>
+      <button className="primary world-setting-confirm" onClick={confirmWorldSetting}>{project.worldSetting?.confirmed ? "World Setting Confirmed · Edit" : "Confirm World Setting"}</button>
+      {project.worldSetting?.confirmed && <small className="confirmed-copy">Confirmed content is included in the next Qwen context.</small>}
     </section>
   );
 }

@@ -127,6 +127,8 @@ export type GodotGenerationPlan = {
   placements: GodotAssetPlacement[];
   missingAssets: MissingAssetRequest[];
   gameplayElements: GodotGameplayElement[];
+  source?: "qwen" | "local_fallback";
+  warning?: string;
 };
 
 
@@ -171,7 +173,7 @@ function cleanJsonText(
     lastBrace === -1
   ) {
     throw new Error(
-      "千问没有返回有效的生成计划。",
+      "Qwen did not return a valid generation plan.",
     );
   }
 
@@ -224,7 +226,7 @@ function validateGenerationPlan(
     typeof value !== "object"
   ) {
     throw new Error(
-           "生成计划格式不正确。",
+           "The generation plan format is invalid.",
        );
   }
 
@@ -307,7 +309,7 @@ function validateGenerationPlan(
         !validAssetIds.has(assetId)
       ) {
         throw new Error(
-          `千问选择了不存在的素材：${assetId}`,
+          `Qwen selected an unknown asset: ${assetId}`,
         );
       }
 
@@ -317,7 +319,7 @@ function validateGenerationPlan(
         )
       ) {
         throw new Error(
-          `生成计划引用了不存在的地图元素：${sourceElementId}`,
+          `The generation plan references an unknown map element: ${sourceElementId}`,
         );
       }
 
@@ -435,7 +437,7 @@ function validateGenerationPlan(
           )
         ) {
           throw new Error(
-            `缺失素材引用了不存在的地图元素：${sourceElementId}`,
+            `A missing asset references an unknown map element: ${sourceElementId}`,
           );
         }
 
@@ -543,7 +545,7 @@ function validateGenerationPlan(
             )
           ) {
             throw new Error(
-              `玩法元素引用了不存在的地图元素：${sourceElementId}`,
+              `A gameplay element references an unknown map element: ${sourceElementId}`,
             );
           }
 
@@ -559,7 +561,7 @@ function validateGenerationPlan(
             )
           ) {
             throw new Error(
-              `未知的玩法元素类型：${rawType}`,
+              `Unknown gameplay element type: ${rawType}`,
             );
           }
 
@@ -740,7 +742,7 @@ function validateGenerationPlan(
     gameplayElements.length === 0
   ) {
     throw new Error(
-      "千问没有生成素材放置方案、缺失素材请求或玩法元素。",
+      "Qwen returned no placements, missing asset requests, or gameplay elements.",
     );
   }
 
@@ -758,60 +760,147 @@ function validateGenerationPlan(
 }
 
 
+function buildLocalFallbackGenerationPlan(
+  map: GodotMapExport,
+  manifest: AssetManifest,
+  reason: string,
+): GodotGenerationPlan {
+  const placements: GodotAssetPlacement[] = [];
+  const missingAssets: MissingAssetRequest[] = [];
+  const gameplayElements: GodotGameplayElement[] = [];
+  const genericArea = manifest.assets.find((asset) => asset.id === "generic_area");
+
+  const classifyGameplay = (element: GodotMapExport["elements"][number]): GameplayElementType | null => {
+    const text = `${element.name} ${element.description}`.toLocaleLowerCase();
+    if (/patrol|route|arrow/.test(text)) return "npc_patrol_route";
+    if (/enemy|stronghold|shrine|camp|base|lair/.test(text)) return "enemy_base";
+    if (/spawn|player|start/.test(text)) return "player_spawn";
+    if (/npc|merchant|resident|character/.test(text)) return "npc";
+    return null;
+  };
+
+  const chooseAsset = (element: GodotMapExport["elements"][number]): AssetManifestItem | null => {
+    const text = `${element.name} ${element.description}`.toLocaleLowerCase();
+    let best: AssetManifestItem | null = null;
+    let bestScore = 0;
+    for (const asset of manifest.assets) {
+      const terms = [asset.id, asset.name, ...asset.tags]
+        .map((term) => term.toLocaleLowerCase())
+        .filter((term) => term.length > 1);
+      const score = terms.reduce((total, term) => total + (text.includes(term) ? Math.max(2, term.length) : 0), 0);
+      if (score > bestScore) {
+        best = asset;
+        bestScore = score;
+      }
+    }
+    return best ?? genericArea ?? manifest.assets[0] ?? null;
+  };
+
+  map.elements.forEach((element, index) => {
+    const gameplayType = classifyGameplay(element);
+    const position = element.position;
+    const width = element.bounds?.width ?? 96;
+    const height = element.bounds?.height ?? 96;
+
+    if (gameplayType) {
+      const routePoints = gameplayType === "npc_patrol_route"
+        ? [
+            { x: position.x - Math.max(30, width / 2), y: position.y },
+            { x: position.x + Math.max(30, width / 2), y: position.y },
+          ]
+        : [];
+      gameplayElements.push({
+        id: `gameplay-${index + 1}`,
+        sourceElementId: element.id,
+        type: gameplayType,
+        name: element.name,
+        description: element.description,
+        position: { x: position.x, y: position.y },
+        size: { width, height },
+        routePoints,
+        layer: 10,
+      });
+      return;
+    }
+
+    const asset = chooseAsset(element);
+    if (asset) {
+      placements.push({
+        id: `placement-${index + 1}`,
+        sourceElementId: element.id,
+        assetId: asset.id,
+        rationale: "Matched locally using element names and asset tags.",
+        position: { x: position.x, y: position.y },
+        size: {
+          width: element.bounds?.width ?? asset.visual.defaultWidth,
+          height: element.bounds?.height ?? asset.visual.defaultHeight,
+        },
+        rotation: 0,
+        layer: asset.placement.layer,
+        collision: asset.physics.collision,
+      });
+    } else {
+      missingAssets.push({
+        id: `missing-asset-${index + 1}`,
+        sourceElementId: element.id,
+        suggestedAssetId: `generated-${element.id}`,
+        name: element.name,
+        category: "environment",
+        rationale: "No suitable asset was found in the manifest.",
+        imagePrompt: `A clean top-down 2D game asset of ${element.name}, consistent with ${map.worldSetting || "the map style"}.`,
+        size: { width, height },
+        layer: 1,
+        collision: false,
+      });
+    }
+  });
+
+  const validated = validateGenerationPlan(
+    { placements, missingAssets, gameplayElements },
+    manifest,
+    map,
+  );
+  return {
+    ...validated,
+    source: "local_fallback",
+    warning: `Qwen is temporarily unavailable. A local fallback plan was used (${reason}).`,
+  };
+}
+
+
 export async function createQwenGenerationPlan(
   map: GodotMapExport,
 ): Promise<GodotGenerationPlan> {
   const manifest =
     await getAssetManifest(true);
 
-  const response = await fetch(
-    "/api/qwen/generation-plan",
-    {
-      method: "POST",
-
-      headers: {
-        "Content-Type":
-          "application/json",
+  try {
+    const response = await fetch(
+      "/api/qwen/generation-plan",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ map, assetManifest: manifest }),
       },
-
-      body: JSON.stringify({
-        map,
-        assetManifest:
-          manifest,
-      }),
-    },
-  );
-
-  const data =
-    (await response.json()) as
-      QwenAPIResponse;
-
-  if (!response.ok) {
-    throw new Error(
-      data.details
-        ? `${data.error ?? "生成计划失败"}：${data.details}`
-        : data.error ??
-            "生成计划失败。",
     );
+    const data = (await response.json()) as QwenAPIResponse;
+    if (!response.ok) {
+      throw new Error(
+        data.details
+          ? `${data.error ?? "Generation plan failed"}: ${data.details}`
+          : data.error ?? "Generation plan failed.",
+      );
+    }
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Qwen did not return a generation plan.");
+    const parsed = JSON.parse(cleanJsonText(content)) as unknown;
+    return {
+      ...validateGenerationPlan(parsed, manifest, map),
+      source: "qwen",
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Network request failed";
+    console.warn("Qwen generation plan unavailable; using local fallback.", reason);
+    return buildLocalFallbackGenerationPlan(map, manifest, reason);
   }
-
-  const content =
-    data.choices?.[0]?.message
-      ?.content;
-
-  if (!content) {
-    throw new Error(
-      "千问没有返回生成计划。",
-    );
-  }
-
-  const parsed = JSON.parse(
-    cleanJsonText(content),
-  ) as unknown;
-
-  return validateGenerationPlan(
-    parsed,
-    manifest,
-    map,
-  );
 }

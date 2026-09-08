@@ -58,6 +58,10 @@ export type ResearchEventType =
   | "asset_role_proposed"
   | "asset_role_corrected"
   | "composition_committed"
+  | "level_state_finalized"
+  | "structural_conflict_detected"
+  | "generation_started"
+  | "generation_contract_ready"
   | "edit_plan_generated"
   | "edit_plan_modified"
   | "edit_plan_applied"
@@ -67,10 +71,22 @@ export type ResearchEventType =
   | "freehand_stroke_started"
   | "freehand_stroke_completed"
   | "freehand_stroke_deleted"
+  | "sketch_mark_deleted"
+  | "sketch_object_deleted"
+  | "sketch_annotation_deleted"
   | "sketch_episode_started"
   | "sketch_episode_completed"
   | "gesture_candidate_generated"
-  | "interpret_selection_requested";
+  | "interpret_selection_requested"
+  | "ai_marker_created"
+  | "ai_card_created"
+  | "ai_card_moved"
+  | "marker_moved"
+  | "marker_deleted"
+  | "ai_question_generated"
+  | "ai_question_reopened"
+  | "interpretation_committed"
+  | "constraint_note_created";
 
 export type ResearchEvent = {
   eventId: string;

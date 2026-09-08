@@ -30,7 +30,7 @@ function cleanJsonText(text: string): string {
   const lastBrace = withoutMarkdown.lastIndexOf("}");
 
   if (firstBrace === -1 || lastBrace === -1) {
-    throw new Error("千问没有返回有效的 JSON。");
+    throw new Error("Qwen did not return valid JSON.");
   }
 
   return withoutMarkdown.slice(firstBrace, lastBrace + 1);
@@ -40,7 +40,7 @@ function validateInterpretation(
   value: unknown,
 ): QwenDoodleInterpretation {
   if (!value || typeof value !== "object") {
-    throw new Error("千问返回的数据格式不正确。");
+    throw new Error("Qwen returned an invalid data format.");
   }
 
   const result = value as {
@@ -52,7 +52,7 @@ function validateInterpretation(
     typeof result.summary !== "string" ||
     !Array.isArray(result.candidates)
   ) {
-    throw new Error("千问返回的数据缺少候选含义。");
+    throw new Error("Qwen returned no interpretation candidates.");
   }
 
   const candidates = result.candidates
@@ -86,7 +86,7 @@ function validateInterpretation(
     }));
 
   if (candidates.length === 0) {
-    throw new Error("千问没有返回可用的候选含义。");
+    throw new Error("Qwen returned no usable interpretation candidates.");
   }
 
   return {
@@ -115,15 +115,15 @@ export async function interpretDoodleWithQwen(
   if (!response.ok) {
     throw new Error(
       data.details
-        ? `${data.error ?? "千问请求失败"}：${data.details}`
-        : data.error ?? "千问请求失败。",
+        ? `${data.error ?? "Qwen request failed"}: ${data.details}`
+        : data.error ?? "Qwen request failed.",
     );
   }
 
   const content = data.choices?.[0]?.message?.content;
 
   if (!content) {
-    throw new Error("千问没有返回识别结果。");
+    throw new Error("Qwen did not return an interpretation result.");
   }
 
   const jsonText = cleanJsonText(content);

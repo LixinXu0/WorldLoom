@@ -74,9 +74,9 @@ export async function generateMissingAsset(
   ) {
     throw new Error(
       data.details
-        ? `${data.error ?? "素材生成失败"}：${data.details}`
+        ? `${data.error ?? "Asset generation failed"}: ${data.details}`
         : data.error ??
-            "万相没有返回素材图片。",
+            "Wanxiang did not return an asset image.",
     );
   }
 

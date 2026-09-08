@@ -41,6 +41,52 @@ export default defineConfig(
           name: "qwen-local-api",
 
           configureServer(server) {
+            const modelApiKey = env.MODEL_API_KEY || dashscopeApiKey;
+            const modelBaseUrl = env.MODEL_BASE_URL || `${DASHSCOPE_BASE_URL}/compatible-mode/v1`;
+            const modelName = env.MODEL_NAME || "qwen3.8-flash";
+            const readJsonBody = async (request: any) => {
+              let rawBody = "";
+              for await (const chunk of request) rawBody += chunk.toString();
+              return JSON.parse(rawBody || "{}");
+            };
+            const callModel = async (messages: unknown[]) => {
+              if (!modelApiKey) throw new Error("MODEL_API_KEY or DASHSCOPE_API_KEY is not configured on the server.");
+              const result = await fetch(`${modelBaseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${modelApiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: modelName, messages, temperature: 0.2, response_format: { type: "json_object" } }) });
+              const payload = await result.json().catch(() => ({}));
+              if (!result.ok) throw new Error(payload?.error?.message || `Model service returned ${result.status}`);
+              const content = payload?.choices?.[0]?.message?.content;
+              const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part: any) => part.text || "").join("") : "{}";
+              return JSON.parse(text.replace(/^```json\s*|\s*```$/g, ""));
+            };
+            server.middlewares.use("/api/interpret", async (request, response, next) => {
+              if (request.method !== "POST") { next(); return; }
+              response.setHeader("Content-Type", "application/json; charset=utf-8");
+              try {
+                const body = await readJsonBody(request);
+                const interpretation = await callModel([
+                  { role: "system", content: "You interpret a player's 2D level sketch for Worldloom. Return JSON only with summary, confidence (0..1), dimensions (six semantic axis values 0..1), exactly three candidates [{name,type,description,confidence,dimensions}], alternative_readings [{summary,rationale}], and questions [string]. Types must distinguish environment (terrain, road, water, building, obstacle) from gameplay (enemy stronghold, player spawn, NPC, NPC movement/patrol arrow). Do not generate 3D or code." },
+                  { role: "user", content: JSON.stringify(body) },
+                ]);
+                response.statusCode = 200;
+                response.end(JSON.stringify({ ...interpretation, source: "model", model: modelName }));
+              } catch (error) {
+                response.statusCode = 503;
+                response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Model request failed" }));
+              }
+            });
+            server.middlewares.use("/api/generate-contract", async (request, response, next) => {
+              if (request.method !== "POST") { next(); return; }
+              response.setHeader("Content-Type", "application/json; charset=utf-8");
+              try {
+                const body = await readJsonBody(request);
+                const result = await callModel([{ role: "system", content: "Validate this Worldloom Playable Generation Contract. Return JSON only with status ('ready' or 'needs_review') and note. Never claim to have generated a playable 3D level." }, { role: "user", content: JSON.stringify(body) }]);
+                response.statusCode = 200;
+                response.end(JSON.stringify({ ...result, source: "model", model: modelName }));
+              } catch (error) {
+                response.statusCode = 503;
+                response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Contract validation failed" }));
+              }
+            });
             server.middlewares.use(
               "/api/qwen/interpret",
 
@@ -69,7 +115,7 @@ export default defineConfig(
                   response.end(
                     JSON.stringify({
                       error:
-                        "没有找到 DASHSCOPE_API_KEY，请检查 .env.local。",
+                        "DASHSCOPE_API_KEY was not found. Check .env.local.",
                     }),
                   );
 
@@ -104,7 +150,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "请求中没有涂鸦图片。",
+                          "The request does not contain a sketch image.",
                       }),
                     );
 
@@ -114,35 +160,35 @@ export default defineConfig(
                   const prompt =
                     body.prompt ??
                     [
-                      "这是一张玩家为2D游戏地图绘制的新增涂鸦。",
-                      "请判断玩家可能想表达什么。",
-                      "涂鸦既可能是环境，也可能是游戏玩法元素。",
+                      "This is a new sketch mark drawn by a player for a 2D game map.",
+                      "Determine what the player may intend.",
+                      "The mark may represent either an environment element or a gameplay element.",
                       "",
-                      "需要重点考虑这些含义：",
-                      "1. 普通环境：地形、道路、水域、建筑、障碍物或地标。",
-                      "2. 敌人据点：敌人营地、敌方基地、怪物巢穴或危险区域。",
-                      "3. 玩家出生点：玩家进入地图时的起始位置。",
-                      "4. NPC：友方角色、商人、任务角色或普通居民。",
-                      "5. NPC移动路线：玩家可能使用带方向的箭头表达NPC移动方向。",
+                      "Consider these meanings:",
+                      "1. Environment: terrain, road, water, building, obstacle, or landmark.",
+                      "2. Enemy base: enemy camp, hostile base, monster lair, or danger zone.",
+                      "3. Player spawn: the starting position when the player enters the map.",
+                      "4. NPC: a friendly character, merchant, quest character, or resident.",
+                      "5. NPC route: a directional arrow showing NPC movement.",
                       "",
-                      "如果图像是箭头：",
-                      "- 优先考虑它是否表示NPC移动路线或巡逻方向。",
-                      "- 箭尾表示起点，箭头表示终点。",
-                      "- 描述中明确说明移动起点、移动方向和终点。",
-                      "- 不要把箭头默认理解为道路素材。",
+                      "If the image is an arrow:",
+                      "- First consider whether it shows an NPC route or patrol direction.",
+                      "- The tail is the start and the arrowhead is the destination.",
+                      "- Describe the start, direction, and destination clearly.",
+                      "- Do not assume an arrow is a road asset.",
                       "",
-                      "给出三个简短、不同且适合玩家确认的候选含义。",
-                      "候选名称应该清楚说明功能，例如“敌人据点”“玩家出生点”“NPC巡逻路线”。",
-                      "不要生成地图，不要生成代码。",
-                      "只返回JSON，不要使用Markdown。",
+                      "Provide three short, distinct candidate interpretations for the player to confirm.",
+                      "Candidate names should clearly describe their function, such as enemy base, player spawn, or NPC patrol route.",
+                      "Do not generate a map or code.",
+                      "Return JSON only; do not use Markdown.",
                       "",
-                      "返回格式：",
+                      "Response format:",
                       "{",
-                      '  "summary": "对涂鸦的简短描述",',
+                      '  "summary": "A short description of the sketch",',
                       '  "candidates": [',
                       "    {",
-                      '      "label": "简短选项名称",',
-                      '      "description": "一句话解释其地图或玩法含义",',
+                      '      "label": "Short option name",',
+                      '      "description": "One-sentence explanation of its map or gameplay meaning",',
                       '      "confidence": 0.0',
                       "    }",
                       "  ]",
@@ -174,7 +220,7 @@ export default defineConfig(
                                   "system",
 
                                 content:
-                                  "你是一个帮助玩家理解2D游戏地图草图和玩法标记的视觉助手。",
+                                  "You help players understand 2D game map sketches and gameplay marks.",
                               },
                               {
                                 role:
@@ -220,7 +266,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "千问 API 请求失败。",
+                          "Qwen API request failed.",
 
                         details:
                           responseText,
@@ -247,7 +293,7 @@ export default defineConfig(
                         error instanceof
                         Error
                           ? error.message
-                          : "调用千问时发生未知错误。",
+                          : "An unknown error occurred while calling Qwen.",
                     }),
                   );
                 }
@@ -283,7 +329,7 @@ export default defineConfig(
                   response.end(
                     JSON.stringify({
                       error:
-                        "没有找到 DASHSCOPE_API_KEY，请检查 .env.local。",
+                        "DASHSCOPE_API_KEY was not found. Check .env.local.",
                     }),
                   );
 
@@ -320,7 +366,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "缺少地图理解或素材清单。",
+                          "Map understanding or asset manifest is missing.",
                       }),
                     );
 
@@ -343,57 +389,57 @@ export default defineConfig(
                       : "";
 
                   const prompt = [
-                    "你是一个2D游戏地图生成规划助手。",
-                    "请分析每一个地图元素，并判断素材库中是否有语义明确且合适的素材。",
-                    "整体背景设定必须影响素材选择、名称、颜色、美术风格和图片生成提示词。",
+                    "You are a 2D game map generation planning assistant.",
+                    "Analyze each map element and decide whether the asset library contains a clear, suitable asset.",
+                    "The world setting must influence asset selection, names, colors, art direction, and image prompts.",
                     "",
-                    "整体背景设定：",
+                    "World setting:",
                     worldSetting ||
-                      "未设置，使用默认风格。",
+                      "Not set; use the default style.",
                     "",
-                    "地图元素可能属于以下类型：",
-                    "- environment：普通环境、地形、道路、水域、建筑或障碍。",
-                    "- enemy_base：敌人据点、敌方营地、怪物巢穴或危险区域。",
-                    "- player_spawn：玩家出生位置或游戏起始点。",
-                    "- npc：友方角色、商人、居民或任务角色。",
-                    "- npc_patrol_route：由箭头表达的NPC移动或巡逻路线。",
+                    "Map elements may use these types:",
+                    "- environment: terrain, road, water, building, or obstacle.",
+                    "- enemy_base: enemy base, hostile camp, monster lair, or danger zone.",
+                    "- player_spawn: player starting position.",
+                    "- npc: friendly character, merchant, resident, or quest character.",
+                    "- npc_patrol_route: NPC movement or patrol route shown by an arrow.",
                     "",
-                    "箭头处理规则：",
-                    "- 箭尾是移动起点，箭头是移动终点。",
-                    "- 箭头只表达方向和起止位置，不需要选择或生成道路图片。",
-                    "- 不要把NPC移动箭头作为普通路径或环境素材。",
+                    "Arrow rules:",
+                    "- The tail is the movement start and the arrowhead is the destination.",
+                    "- An arrow expresses direction and endpoints; do not select or generate a road image for it.",
+                    "- Do not treat an NPC movement arrow as an ordinary path or environment asset.",
                     "",
-                    "素材处理规则：",
-                    "1. 如果有合适素材，把元素放入placements。",
-                    "2. assetId只能使用素材清单中真实存在的id。",
-                    "3. 如果没有合适素材，把元素放入missingAssets。",
-                    "4. 不要勉强使用语义不相关的素材。",
-                    "5. generic_area只能用于普通区域、未知区域或通用地形。",
-                    "6. 每个地图元素只能出现一次。",
-                    "7. 位置和尺寸使用地图原始画布坐标。",
-                    "8. rotation使用角度，默认值为0。",
-                    "9. 普通素材的imagePrompt必须使用英文。",
-                    "10. 普通素材的imagePrompt应描述正俯视2D游戏中的单独物体。",
-                    "11. 所有素材保持统一时代、色彩和美术风格。",
-                    "12. 玩家出生点应该使用清晰的小型标记，不应生成大型环境。",
-                    "13. 敌人据点可以生成营地、堡垒、巢穴或危险区域素材。",
-                    "14. NPC应该生成为单独角色素材。",
-                    "15. NPC移动路线不要加入missingAssets，不要生成图片。",
-                    "16. enemy_base、player_spawn、npc和npc_patrol_route必须放入gameplayElements。",
-                    "17. 玩法元素不要重复放入placements或missingAssets。",
-                    "18. npc_patrol_route必须提供至少两个routePoints。",
-                    "19. routePoints第一个点是箭尾起点，最后一个点是箭头终点。",
-                    "20. 普通玩法点的routePoints返回空数组。",
-                    "21. 只返回JSON，不要使用Markdown。",
+                    "Asset rules:",
+                    "1. If a suitable asset exists, put the element in placements.",
+                    "2. assetId may only use an id that exists in the asset manifest.",
+                    "3. If no suitable asset exists, put the element in missingAssets.",
+                    "4. Do not force a semantically unrelated asset.",
+                    "5. generic_area is only for ordinary, unknown, or generic terrain.",
+                    "6. Each map element may appear only once.",
+                    "7. Use the map's original canvas coordinates for positions and sizes.",
+                    "8. rotation is in degrees and defaults to 0.",
+                    "9. imagePrompt for ordinary assets must be in English.",
+                    "10. Ordinary imagePrompt text should describe a single object in a top-down 2D game.",
+                    "11. Keep all assets consistent in era, colors, and art direction.",
+                    "12. Use a clear small marker for player spawn; do not generate a large environment.",
+                    "13. Enemy bases may use camp, fortress, lair, or danger-zone assets.",
+                    "14. NPCs should be generated as standalone character assets.",
+                    "15. Do not put NPC routes in missingAssets or generate an image for them.",
+                    "16. enemy_base, player_spawn, npc, and npc_patrol_route must go in gameplayElements.",
+                    "17. Do not duplicate gameplay elements in placements or missingAssets.",
+                    "18. npc_patrol_route must provide at least two routePoints.",
+                    "19. The first routePoint is the tail/start and the last is the arrowhead/destination.",
+                    "20. Ordinary gameplay points return an empty routePoints array.",
+                    "21. Return JSON only; do not use Markdown.",
                     "",
-                    "返回格式：",
+                    "Response format:",
                     "{",
                     '  "placements": [',
                     "    {",
                     '      "id": "placement-1",',
-                    '      "sourceElementId": "原始元素id",',
-                    '      "assetId": "已有素材id",',
-                    '      "rationale": "选择原因",',
+                    '      "sourceElementId": "source map element id",',
+                    '      "assetId": "existing asset id",',
+                    '      "rationale": "selection rationale",',
                     '      "position": { "x": 0, "y": 0 },',
                     '      "size": { "width": 100, "height": 100 },',
                     '      "rotation": 0,',
@@ -404,11 +450,11 @@ export default defineConfig(
                     '  "missingAssets": [',
                     "    {",
                     '      "id": "missing-asset-1",',
-                    '      "sourceElementId": "原始元素id",',
-                    '      "suggestedAssetId": "建议的新素材id",',
-                    '      "name": "新素材名称",',
+                    '      "sourceElementId": "source map element id",',
+                    '      "suggestedAssetId": "suggested generated asset id",',
+                    '      "name": "new asset name",',
                     '      "category": "environment",',
-                    '      "rationale": "缺少原因",',
+                    '      "rationale": "why the asset is missing",',
                     '      "imagePrompt": "English image prompt",',
                     '      "size": { "width": 128, "height": 128 },',
                     '      "layer": 1,',
@@ -418,10 +464,10 @@ export default defineConfig(
                     '  "gameplayElements": [',
                     "    {",
                     '      "id": "gameplay-1",',
-                    '      "sourceElementId": "原始元素id",',
-                    '      "type": "enemy_base、player_spawn、npc或npc_patrol_route",',
-                    '      "name": "玩法元素名称",',
-                    '      "description": "玩法功能说明",',
+                    '      "sourceElementId": "source map element id",',
+                    '      "type": "enemy_base, player_spawn, npc, or npc_patrol_route",',
+                    '      "name": "gameplay element name",',
+                    '      "description": "gameplay function description",',
                     '      "position": { "x": 0, "y": 0 },',
                     '      "size": { "width": 80, "height": 80 },',
                     '      "routePoints": [',
@@ -433,12 +479,12 @@ export default defineConfig(
                     "  ]",
                     "}",
                     "",
-                    "地图理解结果：",
+                    "Map understanding result:",
                     JSON.stringify(
                       body.map,
                     ),
                     "",
-                    "可用素材清单：",
+                    "Available asset manifest:",
                     JSON.stringify(
                       body.assetManifest,
                     ),
@@ -469,7 +515,7 @@ export default defineConfig(
                                   "system",
 
                                 content:
-                                  "你负责把地图环境和玩法语义转换为受素材库约束的结构化放置计划。",
+                                  "Convert map environment and gameplay semantics into a structured placement plan constrained by the asset library.",
                               },
                               {
                                 role:
@@ -499,7 +545,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "千问生成计划请求失败。",
+                          "Qwen generation plan request failed.",
 
                         details:
                           responseText,
@@ -523,13 +569,13 @@ export default defineConfig(
                   response.end(
                     JSON.stringify({
                       error:
-                        "生成计划时发生错误。",
+                        "An error occurred while generating the plan.",
 
                       details:
                         error instanceof
                         Error
                           ? error.message
-                          : "未知错误",
+                          : "Unknown error",
                     }),
                   );
                 }
@@ -565,7 +611,7 @@ export default defineConfig(
                   response.end(
                     JSON.stringify({
                       error:
-                        "没有找到 DASHSCOPE_API_KEY。",
+                        "DASHSCOPE_API_KEY was not found.",
                     }),
                   );
 
@@ -606,7 +652,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "缺少素材提示词或素材ID。",
+                          "Asset prompt or asset id is missing.",
                       }),
                     );
 
@@ -740,7 +786,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "万相任务创建失败。",
+                          "Wanxiang task creation failed.",
 
                         details:
                           createText,
@@ -770,7 +816,7 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "万相没有返回任务ID。",
+                          "Wanxiang did not return a task id.",
 
                         details:
                           createText,
@@ -872,7 +918,7 @@ export default defineConfig(
                     ) {
                       throw new Error(
                         taskData.message ??
-                          `万相任务状态：${taskStatus}`,
+                          `Wanxiang task status: ${taskStatus}`,
                       );
                     }
                   }
@@ -884,10 +930,10 @@ export default defineConfig(
                     response.end(
                       JSON.stringify({
                         error:
-                          "等待万相生成图片超时。",
+                          "Timed out waiting for Wanxiang to generate the image.",
 
                         details:
-                          `最后状态：${taskStatus}`,
+                          `Last status: ${taskStatus}`,
                       }),
                     );
 
@@ -930,13 +976,13 @@ export default defineConfig(
                   response.end(
                     JSON.stringify({
                       error:
-                        "生成新素材时发生错误。",
+                        "An error occurred while generating the new asset.",
 
                       details:
                         error instanceof
                         Error
                           ? error.message
-                          : "未知错误",
+                          : "Unknown error",
                     }),
                   );
                 }

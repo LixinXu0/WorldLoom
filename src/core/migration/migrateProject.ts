@@ -60,6 +60,22 @@ function withV2Defaults(project: Partial<WorldloomProject>): WorldloomProject {
     playtestSessions: project.playtestSessions ?? [],
     playtestEvents: project.playtestEvents ?? [],
     experienceFeedback: project.experienceFeedback ?? [],
+    wholeLevelState: project.wholeLevelState ?? (project.generationContract ? "generated" : "editing"),
+    semanticDimensions: project.semanticDimensions ?? {},
+    sharedDesignState: project.sharedDesignState,
+    validationIssues: project.validationIssues ?? [],
+    generationContract: project.generationContract,
+    hiddenSemanticItemIds: project.hiddenSemanticItemIds ?? [],
+    worldSetting: project.worldSetting ?? { text: "", confirmed: false },
+    sketchSubmission: project.sketchSubmission ?? { status: "draft" },
+    mapUnderstandingLocked: project.mapUnderstandingLocked ?? false,
+    mapUnderstandingSnapshot: project.mapUnderstandingSnapshot,
+    mapLayers: project.mapLayers
+      ? {
+          ...project.mapLayers,
+          editVisible: project.mapLayers.editVisible ?? project.mapLayers.sketchVisible ?? true,
+        }
+      : { baseMapVisible: false, editVisible: true, gameplayVisible: true, baseMapStatus: "not_generated" },
   };
 }
 

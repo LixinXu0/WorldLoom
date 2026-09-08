@@ -8,8 +8,12 @@ export const sketchStyles: Record<SketchSemantic, {label:string; color:string; d
   "note-arrow": {label:"Note arrow",color:"var(--text)",arrow:true},
 };
 export function strokeStyle(value?: string) { return sketchStyles[value as SketchSemantic] ?? sketchStyles["main-route"]; }
+export type SemanticItemKind = "question"|"reading"|"constraint"|"uncertainty"|"conflict";
+export type SemanticItemSource = "demo"|"model"|"user"|"auto_detected"|"user_created"|"ai_generated"|"committed_from_candidate";
 export type SemanticItem = {
-  id:string; kind:"question"|"reading"|"constraint"|"uncertainty"|"conflict";
-  targetId:string; text:string; source:"demo"|"model"|"user";
+  id:string; kind:SemanticItemKind;
+  targetId:string; text:string; source:SemanticItemSource;
   offset:{x:number;y:number};
+  visualPosition?: {x:number;y:number};
+  status?: "open"|"candidate"|"committed"|"hidden";
 };
