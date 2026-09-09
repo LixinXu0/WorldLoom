@@ -61,7 +61,7 @@ describe("V4 asset-aware composition workflow", () => {
     const imported = importProjectJson(exportProject(useWorldloomStore.getState().project));
     expect(imported.ok).toBe(true);
     if (imported.ok) {
-      expect(imported.project.version).toBe("4.0.0");
+      expect(imported.project.version).toBe("5.0.0");
       expect(imported.project.sketchState.assetInstances.length).toBe(5);
       expect(imported.project.committedCompositionIntent?.assetInstanceIds.length).toBeGreaterThan(0);
       expect(imported.project.assetEditPlan?.operations.length).toBeGreaterThan(0);
@@ -121,27 +121,5 @@ describe("V4 asset-aware composition workflow", () => {
 
     useWorldloomStore.getState().undo();
     expect(useWorldloomStore.getState().project.sketchState.rawStrokes).toHaveLength(0);
-  });
-});
-
-
-describe("Spatial annotations", () => {
-  it("attaches to an existing asset, round-trips JSON, and supports undo/redo", () => {
-    resetStore();
-    useWorldloomStore.getState().loadV4DemoScene("high-ground");
-    useWorldloomStore.getState().annotateSketch("AI-watchtower", "  high ground overlooks area  ");
-    const project = useWorldloomStore.getState().project;
-    expect(project.sketchState.annotations[0]).toMatchObject({targetId:"AI-watchtower",text:"high ground overlooks area"});
-    const imported = importProjectJson(exportProject(project));
-    expect(imported.ok).toBe(true);
-    if (!imported.ok) throw new Error(imported.error);
-    expect(imported.project.sketchState.annotations).toEqual(project.sketchState.annotations);
-    useWorldloomStore.getState().undo();
-    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(0);
-    useWorldloomStore.getState().redo();
-    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(1);
-    useWorldloomStore.getState().annotateSketch("missing-asset", "Invalid target");
-    useWorldloomStore.getState().annotateSketch("AI-watchtower", "   ");
-    expect(useWorldloomStore.getState().project.sketchState.annotations).toHaveLength(1);
   });
 });

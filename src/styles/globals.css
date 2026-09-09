@@ -125,3 +125,221 @@ select { border: 1px solid var(--border); border-radius: 3px; min-height: 28px; 
 .variant-tray { grid-template-columns: 180px repeat(3, minmax(220px, 1fr)); }
 .variant-card button { min-height: 24px; padding: 2px 6px; }
 
+/* Worldloom upgraded gameplay / constraint / validation compatibility */
+.gameplay-graph-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.gameplay-node,
+.gameplay-route,
+.gameplay-relation {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.gameplay-node:hover circle {
+  stroke-width: 3;
+}
+.gameplay-route:hover line:first-child,
+.gameplay-relation:hover line:first-child {
+  opacity: 1;
+}
+.gameplay-context-card {
+  width: 320px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid #d8d8d8;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+.gameplay-context-card__header p,
+.gameplay-context-card p {
+  margin: 5px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.gameplay-context-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid #ececec;
+}
+.gameplay-context-card__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.gameplay-context-card__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gameplay-context-candidate,
+.gameplay-context-constraint,
+.gameplay-context-conflict,
+.gameplay-context-repair {
+  padding: 9px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.gameplay-context-candidate.selected {
+  border-color: #2869ff;
+}
+.gameplay-context-candidate__main {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+.gameplay-context-candidate__main span:first-child,
+.gameplay-context-constraint > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gameplay-context-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.gameplay-context-card__chips span {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #eeeeee;
+  font-size: 10px;
+}
+.gameplay-context-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.gameplay-context-constraint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gameplay-context-card__empty {
+  opacity: 0.6;
+}
+.gameplay-context-card__valid {
+  font-weight: 600;
+}
+.gameplay-context-conflict.error {
+  border-color: #d77;
+}
+.gameplay-context-conflict.warning {
+  border-color: #d9aa5d;
+}
+.gameplay-context-repair {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.constraint-inspector select,
+.constraint-inspector input[type="number"] {
+  width: 100%;
+}
+.constraint-mode-note,
+.constraint-tolerance {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+}
+.constraint-tolerance dl {
+  margin-bottom: 8px;
+}
+.conflict-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.conflict-panel__header,
+.conflict-panel__item-header,
+.conflict-panel__summary,
+.conflict-panel__repair {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.conflict-panel__header h3,
+.conflict-panel__header p,
+.conflict-panel__item p,
+.conflict-panel__repair p {
+  margin: 0;
+}
+.conflict-panel__header p,
+.conflict-panel__item p,
+.conflict-panel__repair p,
+.conflict-panel small {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.conflict-panel__list,
+.conflict-panel__repairs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.conflict-panel__item {
+  padding: 10px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+}
+.conflict-panel__item.error {
+  border-color: #d77;
+}
+.conflict-panel__item.warning {
+  border-color: #d9aa5d;
+}
+.conflict-panel__location {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.conflict-panel__location > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.conflict-panel__location span {
+  min-width: 68px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.conflict-panel__location button {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.conflict-panel__location button.active {
+  outline: 2px solid #2869ff;
+}
+.conflict-panel__repairs {
+  margin-top: 10px;
+}
+.conflict-panel__repair {
+  padding: 8px;
+  border: 1px solid #e4e4e4;
+  border-radius: 7px;
+  background: #fafafa;
+}
+.conflict-panel__valid,
+.conflict-panel__empty {
+  padding: 12px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+}

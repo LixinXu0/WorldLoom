@@ -11,8 +11,8 @@
 		"area",
 		"region",
 		"zone",
-		"terrain",
-        "region"
+		"地形",
+        "区域"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -40,8 +40,8 @@
 		"grass",
 		"ground",
 		"field",
-		"grass",
-        "ground"
+		"草地",
+        "地面"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -69,9 +69,9 @@
 		"lake",
 		"water",
 		"pond",
-		"lake",
-		"water",
-        "pond"
+		"湖泊",
+		"水域",
+        "池塘"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -100,9 +100,9 @@
 		"cave",
 		"entrance",
 		"hole",
-		"cave",
-		"entrance",
-        "cavern"
+		"洞穴",
+		"入口",
+        "山洞"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -132,9 +132,9 @@
 		"road",
 		"route",
 		"stone",
-		"road",
-		"trail",
-        "route"
+		"道路",
+		"小路",
+        "路线"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -163,9 +163,9 @@
 		"railway",
 		"track",
 		"line",
-		"railway",
-		"track",
-        "line"
+		"铁路",
+		"轨道",
+        "线路"
 	  ],
 	  "origin": "built_in",
 	  "resource": {
@@ -194,9 +194,9 @@
 		"barrier",
 		"boundary",
 		"stone",
-		"wall",
-		"barrier",
-        "obstacle"
+		"墙",
+		"围墙",
+        "障碍"
 	  ],
 	  "origin": "built_in",
 	  "resource": {

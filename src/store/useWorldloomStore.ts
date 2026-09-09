@@ -1,8 +1,8 @@
-import { createSemanticDemoProject } from "../examples/semanticDemo";
+
 import type { SketchSemantic } from "../core/sketch/semanticStyles";
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue, PlayableGenerationContract } from "../core/types";
+import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue } from "../core/types";
 import type { ClarificationAnswer, InterpretationMode, IntentInterpretationResult, ResearchMode } from "../core/intent/types";
 import type { AssetInstance, SketchMarkKind, SketchObjectType, SketchRelationType } from "../core/sketch/types";
 import type { SemanticItemKind } from "../core/sketch/semanticStyles";
@@ -36,16 +36,214 @@ import { boundsForRawStroke, classifyRawStrokeGesture, nearbyAssetsForStroke } f
 import { buildTrainingExample } from "../research/trainingExample";
 import { calculateResearchMetrics, type ResearchMetrics } from "../research/metrics";
 import { createResearchEvent, createResearchSessionId, exportResearchLog, type ResearchEvent } from "../research/interactionLogger";
-import { buildGenerationContract, dimensionsFromHypothesis, validateDesignState } from "../core/workflow/designState";
 import { requestModelInterpretation, requestGenerationContract } from "../ai/modelClient";
 import { captureStrokeSnapshot } from "../core/image/canvasDiff";
+import type { GameplayGraph, GameplayNode, GameplayRelation, GameplayRoute } from "../core/gameplay/types";
+import {
+  addGameplayNode as addNodeToGraph,
+  addGameplayRelation as addRelationToGraph,
+  addGameplayRoute as addRouteToGraph,
+  createGameplayNode,
+  createGameplayRelation,
+  createGameplayRoute,
+  removeGameplayNode as removeNodeFromGraph,
+  removeGameplayRelation as removeRelationFromGraph,
+  removeGameplayRoute as removeRouteFromGraph,
+  updateGameplayNode as updateNodeInGraph,
+  updateGameplayRelation as updateRelationInGraph,
+  updateGameplayRoute as updateRouteInGraph,
+  type CreateGameplayNodeInput,
+  type CreateGameplayRelationInput,
+  type CreateGameplayRouteInput,
+} from "../core/gameplay/gameplayGraph";
+import type {
+  ExperienceLayer,
+  GameplayLayer,
+  GameplayRepairProposal,
+  SceneLayer,
+  SharedLevelDesignState,
+  SharedSpatialConstraint,
+  SpatialConstraintMode,
+  SpatialLayer,
+} from "../core/shared-state/types";
+import type { GameplayCandidatePatch } from "../core/negotiation/types";
+import type { LocalRegenerationOptions } from "../core/generator/generateVariants";
+import {
+  synchronizeSharedLevelDesignState,
+  updateGameplayLayer,
+  updateSceneLayer,
+  updateSpatialLayer,
+  updateExperienceLayer,
+  setGameplayCandidates,
+  selectGameplayCandidate as selectSharedGameplayCandidate,
+  commitGameplayCandidate as commitSharedGameplayCandidate,
+  setGameplayValidationResult,
+  setGameplayRepairProposals,
+  synchronizeGameplayRepairResult,
+} from "../core/shared-state/sharedLevelDesignState";
+import {
+  createGameplayNegotiationSession,
+  generateDefaultGameplayCandidates,
+  updateGameplayCandidate as updateGameplayCandidateSession,
+  selectGameplayCandidate as selectGameplayCandidateSession,
+  rejectGameplayCandidate as rejectGameplayCandidateSession,
+  commitGameplayCandidate as commitGameplayCandidateSession,
+} from "../core/negotiation/gameplayInterpretation";
+import {
+  updateSpatialConstraintModel,
+  setSpatialConstraintMode as setSpatialConstraintModelMode,
+} from "../core/constraints/spatialConstraintModel";
+import { validateGameplayGraph } from "../core/validator/validateGameplayGraph";
+import {
+  generateGameplayRepairProposals,
+  applyGameplayRepair as applyGameplayRepairProposal,
+} from "../core/validator/repairGameplayGraph";
+import { buildPlayableGenerationContract } from "../core/contract/buildPlayableGenerationContract";
+import type { PlayableGenerationContract } from "../core/contract/types";
+
+
+function dimensionsFromHypothesis(
+  hypothesis: WorldloomProject["compositionHypothesis"],
+) {
+  const summary = `${
+    hypothesis?.summary ?? ""
+  } ${
+    hypothesis?.assetRoles
+      .map((role) => role.proposedRole)
+      .join(" ") ?? ""
+  }`.toLowerCase();
+
+  const values: Record<string, number> = {
+    grouping_combat:
+      /combat|encounter|enemy|defen/.test(summary)
+        ? 0.78
+        : 0.32,
+    local_regional:
+      /regional|global|landmark/.test(summary)
+        ? 0.68
+        : 0.32,
+    detour_main_route:
+      /main|approach|route/.test(summary)
+        ? 0.72
+        : 0.28,
+    optional_mandatory:
+      /optional|detour/.test(summary)
+        ? 0.22
+        : 0.6,
+    decorative_functional:
+      /functional|encounter|reward|gate/.test(summary)
+        ? 0.8
+        : 0.38,
+    low_risk_high_risk:
+      /enemy|combat|danger|conflict/.test(summary)
+        ? 0.72
+        : 0.3,
+  };
+
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [
+      key,
+      {
+        proposed: value,
+        value,
+        adjusted: false,
+      },
+    ]),
+  );
+}
+
+function validateDesignStateCompat(
+  project: WorldloomProject,
+): StructuralIssue[] {
+  const issues: StructuralIssue[] = [];
+
+  const assets =
+    project.sketchState.assetInstances;
+
+  const hasRoute =
+    project.sketchState.rawStrokes.some(
+      (stroke) => !stroke.deleted,
+    ) ||
+    project.sketchState.marks.some(
+      (mark) =>
+        mark.kind === "path" ||
+        mark.kind === "arrow",
+    );
+
+  if (assets.length === 0) {
+    issues.push({
+      id: "missing-start",
+      severity: "error",
+      message:
+        "Start is missing: place at least one scene element to define the playable space.",
+    });
+  }
+
+  if (!hasRoute) {
+    issues.push({
+      id: "missing-route",
+      severity: "warning",
+      message:
+        "No route is defined between the start and goal.",
+    });
+  }
+
+  const gameplayValidation =
+    validateGameplayGraph(
+      project.sharedLevelDesignState.gameplay.graph,
+    );
+
+  for (const conflict of
+    gameplayValidation.conflicts) {
+    issues.push({
+      id: conflict.id,
+      severity:
+        conflict.severity === "error"
+          ? "error"
+          : "warning",
+      message: conflict.message,
+      sourceIds: [
+        ...conflict.nodeIds,
+        ...conflict.relationIds,
+        ...conflict.routeIds,
+      ],
+    });
+  }
+
+  return issues;
+}
+
+function buildGenerationContractCompat(
+  project: WorldloomProject,
+): PlayableGenerationContract {
+  return buildPlayableGenerationContract(
+    project.sharedLevelDesignState,
+    {
+      projectId: project.projectId,
+      seed: project.seed,
+      canvasWidth:
+        project.metadata.canvasWidth,
+      canvasHeight:
+        project.metadata.canvasHeight,
+      regenerationMode: "full",
+      lockedElementIds:
+        project.sketchState.assetInstances
+          .filter(
+            (asset) =>
+              asset.locked ||
+              asset.preserve,
+          )
+          .map((asset) => asset.id),
+    },
+  );
+}
 
 export type WorldloomState = {
   project: WorldloomProject;
   activeTool: Tool;
   sketchSemantic: SketchSemantic;
   setSketchSemantic: (style: SketchSemantic) => void;
-  loadSemanticDemo: () => void;
+ 
   wholeLevelState: WholeLevelState;
   modelStatus: "idle" | "loading" | "ready" | "error";
   modelError: string | null;
@@ -110,6 +308,38 @@ export type WorldloomState = {
   setResearchMode: (mode: ResearchMode) => void;
   setInterpretationMode: (mode: InterpretationMode) => void;
   setTextInstruction: (text: string) => void;
+  addGameplayNode: (input: CreateGameplayNodeInput) => string;
+  updateGameplayNode: (nodeId: string, patch: Partial<Omit<GameplayNode, "id">>) => void;
+  deleteGameplayNode: (nodeId: string) => void;
+  addGameplayRelation: (input: CreateGameplayRelationInput) => string | null;
+  updateGameplayRelation: (relationId: string, patch: Partial<Omit<GameplayRelation, "id">>) => void;
+  deleteGameplayRelation: (relationId: string) => void;
+  addGameplayRoute: (input: CreateGameplayRouteInput) => string | null;
+  updateGameplayRoute: (routeId: string, patch: Partial<Omit<GameplayRoute, "id">>) => void;
+  deleteGameplayRoute: (routeId: string) => void;
+  updateSharedScene: (patch: Partial<SceneLayer>) => void;
+  updateSharedSpatial: (patch: Partial<SpatialLayer>) => void;
+  updateSharedGameplay: (graphOrPatch: GameplayGraph | Partial<GameplayLayer>) => void;
+  updateSharedExperience: (patch: Partial<ExperienceLayer>) => void;
+  synchronizeSharedState: (update: {
+    scene?: Partial<SceneLayer>;
+    spatial?: Partial<SpatialLayer>;
+    gameplay?: Partial<GameplayLayer>;
+    experience?: Partial<ExperienceLayer>;
+  }) => void;
+  generateGameplayCandidates: () => void;
+  updateGameplayCandidate: (candidateId: string, patch: GameplayCandidatePatch) => void;
+  selectGameplayCandidate: (candidateId: string) => void;
+  rejectGameplayCandidate: (candidateId: string) => void;
+  commitGameplayCandidate: (candidateId?: string) => void;
+  upsertSpatialConstraint: (constraint: SharedSpatialConstraint) => void;
+  updateSpatialConstraint: (constraintId: string, patch: Partial<Omit<SharedSpatialConstraint, "id" | "targetElementId">>) => void;
+  setSpatialConstraintMode: (constraintId: string, mode: SpatialConstraintMode) => void;
+  removeSpatialConstraint: (constraintId: string) => void;
+  validateGameplay: () => void;
+  generateGameplayRepairs: () => void;
+  applyGameplayRepair: (repairId: string) => void;
+  regenerateLocal: (scope: Omit<LocalRegenerationOptions, "mode" | "previousVariants">) => void;
   selectInterpretationAlternative: (interpretationId: string, alternativeId: string) => void;
   placeAssetInstance: (assetDefinitionId: string, position?: Point) => void;
   moveAssetInstance: (assetInstanceId: string, dx: number, dy: number) => void;
@@ -231,8 +461,70 @@ function buildDraft(project: WorldloomProject, variantId: string, before: RoomNo
   return { ...edit, inferredMeaning: inferEditMeaning(edit, before, project.constraints, project.strokes), selectedInterpretationId: null };
 }
 
+function projectWithGameplayGraph(
+  project: WorldloomProject,
+  graph: GameplayGraph,
+  updatedAt = Date.now(),
+): WorldloomProject {
+  const sharedLevelDesignState = updateGameplayLayer(
+    project.sharedLevelDesignState,
+    {
+      graph,
+      validation: null,
+      repairs: [],
+    },
+    updatedAt,
+  );
+
+  return {
+    ...project,
+    gameplayGraph: graph,
+    sharedLevelDesignState,
+    metadata: {
+      ...project.metadata,
+      updatedAt,
+    },
+  };
+}
+
+function gameplayNegotiationSessionForProject(
+  project: WorldloomProject,
+) {
+  const negotiation =
+    project.sharedLevelDesignState.gameplay.negotiation ?? {
+      candidates: [],
+      selectedCandidateId: null,
+      committedCandidateIds: [],
+    };
+
+  const session = createGameplayNegotiationSession(
+    {
+      sourceSceneElementIds: project.sketchSelection.ids.filter((id) =>
+        project.sharedLevelDesignState.scene.elements.some((element) => element.id === id),
+      ),
+      sourceSketchIds: [...project.sketchSelection.ids],
+      sourceGameplayNodeIds: project.gameplayGraph.nodes
+        .filter((node) => project.sketchSelection.ids.includes(node.id))
+        .map((node) => node.id),
+      userInstruction: project.textInstruction,
+      worldSetting: project.sharedLevelDesignState.scene.worldSetting,
+      currentGraph: project.sharedLevelDesignState.gameplay.graph,
+    },
+    negotiation.candidates,
+  );
+
+  return {
+    ...session,
+    state: {
+      candidates: negotiation.candidates,
+      selectedCandidateId: negotiation.selectedCandidateId,
+      committedCandidateIds: negotiation.committedCandidateIds,
+    },
+  };
+}
+
 export const useWorldloomStore = create<WorldloomState>((set, get) => {
-  const initialProject = createSemanticDemoProject();
+  const initialProject = createEmptyProject();
   const researchSessionId = createResearchSessionId();
   const movementBaselines = new Map<string, { x: number; y: number }>();
   const logEvent = (eventType: ResearchEvent["eventType"], payload: Record<string, unknown> = {}) => {
@@ -263,7 +555,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   },
   finalizeDesignState: (force = false) => {
     const state = get();
-    const issues = validateDesignState(state.project);
+    const issues = validateDesignStateCompat(state.project);
     const sharedDesignState = { id: `SHARED-${nanoid(6)}`, committedAssetIds: state.project.committedCompositionIntent?.assetInstanceIds ?? [], spatialConstraints: state.project.sketchState.relations, gameplayConstraints: state.project.constraints, experienceConstraints: state.project.committedCompositionIntent?.experientialGoals ?? [], finalizedAt: Date.now() };
     const nextState: WholeLevelState = issues.length && !force ? "needs_validation" : "ready_to_generate";
     const project = { ...state.project, sharedDesignState, validationIssues: issues, wholeLevelState: nextState, metadata: { ...state.project.metadata, updatedAt: Date.now() } };
@@ -273,7 +565,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   },
   validateDesignState: () => {
     const state = get();
-    const issues = validateDesignState(state.project);
+    const issues = validateDesignStateCompat(state.project);
     const nextState: WholeLevelState = issues.length ? "needs_validation" : "ready_to_generate";
     set({ project: { ...state.project, validationIssues: issues, wholeLevelState: nextState }, wholeLevelState: nextState, validationIssues: issues });
     issues.forEach((issue) => logEvent("structural_conflict_detected", { issueId: issue.id, severity: issue.severity, message: issue.message }));
@@ -281,11 +573,11 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   generateLevelContract: () => {
     const state = get();
     if (state.project.wholeLevelState !== "ready_to_generate" && state.wholeLevelState !== "ready_to_generate") return;
-    const contract = buildGenerationContract(state.project);
-    const project = { ...state.project, generationContract: contract, generatedOutput: { status: "contract_ready" as const, generatedAssetCount: contract.asset_constraints.length, generatedAt: Date.now(), message: "Playable generation contract ready. Rendered scene output is external." }, wholeLevelState: "generated" as const, metadata: { ...state.project.metadata, updatedAt: Date.now() } };
+    const contract = buildGenerationContractCompat(state.project);
+    const project = { ...state.project, generationContract: contract, generatedOutput: { status: "contract_ready" as const, generatedAssetCount: contract.scene.elements.length, generatedAt: Date.now(), message: "Playable generation contract ready. Rendered scene output is external." }, wholeLevelState: "generated" as const, metadata: { ...state.project.metadata, updatedAt: Date.now() } };
     set({ project, wholeLevelState: "generated", generationContract: contract });
     logEvent("generation_started", { contractId: contract.id });
-    logEvent("generation_contract_ready", { contractId: contract.id, assetCount: contract.asset_constraints.length });
+    logEvent("generation_contract_ready", { contractId: contract.id, assetCount: contract.scene.elements.length });
     void requestGenerationContract({ contract }).catch(() => undefined);
   },
   retryInterpretation: () => { get().interpretTogether(); },
@@ -335,7 +627,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     if (kind === "question") logEvent("ai_question_generated", { semanticItemId: item.id, source: "user_created" });
     if (kind === "constraint") logEvent("constraint_note_created", { semanticItemId: item.id, source: "user_created" });
   },
-  loadSemanticDemo: () => { const state=get(); const project=createSemanticDemoProject(); set({project,editorMode:"intent",activeTool:"select",wholeLevelState:project.wholeLevelState??"editing",generationContract:project.generationContract??null,validationIssues:project.validationIssues??[],modelStatus:"idle",modelError:null,modelSource:"demo",undoHistory:commit(state.project,state.undoHistory),redoHistory:[]}); },
+  
   setWorldSetting: (text) => {
     const state = get();
     set({ project: { ...state.project, worldSetting: { text, confirmed: false } } });
@@ -499,6 +791,308 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     set({ project: { ...state.project, textInstruction } });
     logEvent("text_instruction_changed", { length: textInstruction.length });
+  },
+  addGameplayNode: (input) => {
+    const state = get();
+    const node = createGameplayNode(input);
+    const graph = addNodeToGraph(state.project.gameplayGraph, node);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({
+      project,
+      selected: { kind: "gameplay-node", id: node.id },
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("sketch_object_created", { source: "gameplay", nodeId: node.id, nodeType: node.type, requirement: node.requirement });
+    return node.id;
+  },
+  updateGameplayNode: (nodeId, patch) => {
+    const state = get();
+    if (!state.project.gameplayGraph.nodes.some((node) => node.id === nodeId)) return;
+    const graph = updateNodeInGraph(state.project.gameplayGraph, nodeId, patch);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({ project, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
+  deleteGameplayNode: (nodeId) => {
+    const state = get();
+    if (!state.project.gameplayGraph.nodes.some((node) => node.id === nodeId)) return;
+    const graph = removeNodeFromGraph(state.project.gameplayGraph, nodeId);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({
+      project,
+      selected: state.selected?.kind === "gameplay-node" && state.selected.id === nodeId ? null : state.selected,
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+  },
+  addGameplayRelation: (input) => {
+    const state = get();
+    const graph = state.project.gameplayGraph;
+    if (!graph.nodes.some((node) => node.id === input.sourceNodeId) || !graph.nodes.some((node) => node.id === input.targetNodeId) || input.sourceNodeId === input.targetNodeId) return null;
+    const relation = createGameplayRelation(input);
+    const nextGraph = addRelationToGraph(graph, relation);
+    const project = projectWithGameplayGraph(state.project, nextGraph);
+    set({
+      project,
+      selected: { kind: "gameplay-relation", id: relation.id },
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("relation_created", { source: "gameplay", relationId: relation.id, relationType: relation.type, requirement: relation.requirement });
+    return relation.id;
+  },
+  updateGameplayRelation: (relationId, patch) => {
+    const state = get();
+    if (!state.project.gameplayGraph.relations.some((relation) => relation.id === relationId)) return;
+    const graph = updateRelationInGraph(state.project.gameplayGraph, relationId, patch);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({ project, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
+  deleteGameplayRelation: (relationId) => {
+    const state = get();
+    if (!state.project.gameplayGraph.relations.some((relation) => relation.id === relationId)) return;
+    const graph = removeRelationFromGraph(state.project.gameplayGraph, relationId);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({
+      project,
+      selected: state.selected?.kind === "gameplay-relation" && state.selected.id === relationId ? null : state.selected,
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("relation_deleted", { source: "gameplay", relationId });
+  },
+  addGameplayRoute: (input) => {
+    const state = get();
+    const graph = state.project.gameplayGraph;
+    if (!graph.nodes.some((node) => node.id === input.sourceNodeId) || !graph.nodes.some((node) => node.id === input.targetNodeId) || input.sourceNodeId === input.targetNodeId) return null;
+    const route = createGameplayRoute(input);
+    const nextGraph = addRouteToGraph(graph, route);
+    const project = projectWithGameplayGraph(state.project, nextGraph);
+    set({
+      project,
+      selected: { kind: "gameplay-route", id: route.id },
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("relation_created", { source: "gameplay-route", routeId: route.id, routeType: route.type, requirement: route.requirement });
+    return route.id;
+  },
+  updateGameplayRoute: (routeId, patch) => {
+    const state = get();
+    if (!state.project.gameplayGraph.routes.some((route) => route.id === routeId)) return;
+    const graph = updateRouteInGraph(state.project.gameplayGraph, routeId, patch);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({ project, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
+  deleteGameplayRoute: (routeId) => {
+    const state = get();
+    if (!state.project.gameplayGraph.routes.some((route) => route.id === routeId)) return;
+    const graph = removeRouteFromGraph(state.project.gameplayGraph, routeId);
+    const project = projectWithGameplayGraph(state.project, graph);
+    set({
+      project,
+      selected: state.selected?.kind === "gameplay-route" && state.selected.id === routeId ? null : state.selected,
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("relation_deleted", { source: "gameplay-route", routeId });
+  },
+  updateSharedScene: (patch) => {
+    const state = get();
+    const sharedLevelDesignState = updateSceneLayer(state.project.sharedLevelDesignState, patch);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+  },
+  updateSharedSpatial: (patch) => {
+    const state = get();
+    const sharedLevelDesignState = updateSpatialLayer(state.project.sharedLevelDesignState, patch);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+  },
+  updateSharedGameplay: (graphOrPatch) => {
+    const state = get();
+    const sharedLevelDesignState = updateGameplayLayer(state.project.sharedLevelDesignState, graphOrPatch);
+    const graph = "nodes" in graphOrPatch ? graphOrPatch : graphOrPatch.graph ?? sharedLevelDesignState.gameplay.graph;
+    set({
+      project: {
+        ...state.project,
+        gameplayGraph: graph,
+        sharedLevelDesignState,
+      },
+    });
+  },
+  updateSharedExperience: (patch) => {
+    const state = get();
+    const sharedLevelDesignState = updateExperienceLayer(state.project.sharedLevelDesignState, patch);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+  },
+  synchronizeSharedState: (update) => {
+    const state = get();
+    const sharedLevelDesignState = synchronizeSharedLevelDesignState(state.project.sharedLevelDesignState, update);
+    set({
+      project: {
+        ...state.project,
+        gameplayGraph: sharedLevelDesignState.gameplay.graph,
+        sharedLevelDesignState,
+      },
+    });
+  },
+  generateGameplayCandidates: () => {
+    const state = get();
+    const session = gameplayNegotiationSessionForProject(state.project);
+    const result = generateDefaultGameplayCandidates(session.context);
+    const sharedLevelDesignState = setGameplayCandidates(state.project.sharedLevelDesignState, result.candidates);
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("gameplay_candidate_generated", { candidateIds: result.candidates.map((candidate) => candidate.id), source: result.source });
+  },
+  updateGameplayCandidate: (candidateId, patch) => {
+    const state = get();
+    const session = updateGameplayCandidateSession(gameplayNegotiationSessionForProject(state.project), candidateId, patch);
+    const sharedLevelDesignState = setGameplayCandidates(state.project.sharedLevelDesignState, session.state.candidates);
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("gameplay_candidate_changed", { candidateId });
+  },
+  selectGameplayCandidate: (candidateId) => {
+    const state = get();
+    selectGameplayCandidateSession(gameplayNegotiationSessionForProject(state.project), candidateId);
+    const sharedLevelDesignState = selectSharedGameplayCandidate(state.project.sharedLevelDesignState, candidateId);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+    logEvent("gameplay_candidate_selected", { candidateId });
+  },
+  rejectGameplayCandidate: (candidateId) => {
+    const state = get();
+    const session = rejectGameplayCandidateSession(gameplayNegotiationSessionForProject(state.project), candidateId);
+    let sharedLevelDesignState = setGameplayCandidates(state.project.sharedLevelDesignState, session.state.candidates);
+    sharedLevelDesignState = selectSharedGameplayCandidate(sharedLevelDesignState, session.state.selectedCandidateId);
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("gameplay_candidate_rejected", { candidateId });
+  },
+  commitGameplayCandidate: (candidateId) => {
+    const state = get();
+    const session0 = gameplayNegotiationSessionForProject(state.project);
+    const targetId = candidateId ?? session0.state.selectedCandidateId;
+    if (!targetId) return;
+    const session1 = selectGameplayCandidateSession(session0, targetId);
+    const committed = commitGameplayCandidateSession(session1, targetId);
+    if (!committed.commitment) return;
+    const sharedLevelDesignState = commitSharedGameplayCandidate(
+      setGameplayCandidates(state.project.sharedLevelDesignState, committed.state.candidates),
+      targetId,
+      committed.commitment.resultingGraph,
+    );
+    const project = {
+      ...state.project,
+      gameplayGraph: committed.commitment.resultingGraph,
+      sharedLevelDesignState,
+      metadata: { ...state.project.metadata, updatedAt: Date.now() },
+    };
+    set({ project, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("gameplay_candidate_committed", { candidateId: targetId });
+  },
+  upsertSpatialConstraint: (constraint) => {
+    const state = get();
+    const constraints = state.project.sharedLevelDesignState.spatial.constraints.some((item) => item.id === constraint.id)
+      ? state.project.sharedLevelDesignState.spatial.constraints.map((item) => item.id === constraint.id ? constraint : item)
+      : [...state.project.sharedLevelDesignState.spatial.constraints, constraint];
+    const sharedLevelDesignState = updateSpatialLayer(state.project.sharedLevelDesignState, { constraints });
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("spatial_constraint_created", { constraintId: constraint.id, targetElementId: constraint.targetElementId, mode: constraint.mode, property: constraint.property });
+  },
+  updateSpatialConstraint: (constraintId, patch) => {
+    const state = get();
+    const current = state.project.sharedLevelDesignState.spatial.constraints.find((constraint) => constraint.id === constraintId);
+    if (!current) return;
+    const updated = updateSpatialConstraintModel(current, patch);
+    const constraints = state.project.sharedLevelDesignState.spatial.constraints.map((constraint) => constraint.id === constraintId ? updated : constraint);
+    const sharedLevelDesignState = updateSpatialLayer(state.project.sharedLevelDesignState, { constraints });
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("spatial_constraint_updated", { constraintId, mode: updated.mode, property: updated.property });
+  },
+  setSpatialConstraintMode: (constraintId, mode) => {
+    const state = get();
+    const current = state.project.sharedLevelDesignState.spatial.constraints.find((constraint) => constraint.id === constraintId);
+    if (!current) return;
+    const updated = setSpatialConstraintModelMode(current, mode);
+    const constraints = state.project.sharedLevelDesignState.spatial.constraints.map((constraint) => constraint.id === constraintId ? updated : constraint);
+    const sharedLevelDesignState = updateSpatialLayer(state.project.sharedLevelDesignState, { constraints });
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("spatial_constraint_mode_changed", { constraintId, mode });
+  },
+  removeSpatialConstraint: (constraintId) => {
+    const state = get();
+    const constraints = state.project.sharedLevelDesignState.spatial.constraints.filter((constraint) => constraint.id !== constraintId);
+    const sharedLevelDesignState = updateSpatialLayer(state.project.sharedLevelDesignState, { constraints });
+    set({ project: { ...state.project, sharedLevelDesignState }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("spatial_constraint_removed", { constraintId });
+  },
+  validateGameplay: () => {
+    const state = get();
+    logEvent("gameplay_validation_requested", { nodeCount: state.project.gameplayGraph.nodes.length });
+    const validation = validateGameplayGraph(state.project.sharedLevelDesignState.gameplay.graph);
+    const repairs = generateGameplayRepairProposals(state.project.sharedLevelDesignState.gameplay.graph, validation);
+    let sharedLevelDesignState = setGameplayValidationResult(state.project.sharedLevelDesignState, validation);
+    sharedLevelDesignState = setGameplayRepairProposals(sharedLevelDesignState, repairs);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+    logEvent("gameplay_validation_completed", { validationId: validation.id, valid: validation.valid, conflictCount: validation.conflicts.length });
+    validation.conflicts.forEach((conflict) => logEvent("gameplay_conflict_detected", { conflictId: conflict.id, type: conflict.type, severity: conflict.severity, nodeIds: conflict.nodeIds }));
+    repairs.forEach((repair) => logEvent("gameplay_repair_generated", { repairId: repair.id, conflictId: repair.conflictId, operationCount: repair.operations.length }));
+  },
+  generateGameplayRepairs: () => {
+    const state = get();
+    const validation = state.project.sharedLevelDesignState.gameplay.validation ?? validateGameplayGraph(state.project.sharedLevelDesignState.gameplay.graph);
+    const repairs = generateGameplayRepairProposals(state.project.sharedLevelDesignState.gameplay.graph, validation);
+    let sharedLevelDesignState = setGameplayValidationResult(state.project.sharedLevelDesignState, validation);
+    sharedLevelDesignState = setGameplayRepairProposals(sharedLevelDesignState, repairs);
+    set({ project: { ...state.project, sharedLevelDesignState } });
+    repairs.forEach((repair) => logEvent("gameplay_repair_generated", { repairId: repair.id, conflictId: repair.conflictId, operationCount: repair.operations.length }));
+  },
+  applyGameplayRepair: (repairId) => {
+    const state = get();
+    const proposal = state.project.sharedLevelDesignState.gameplay.repairs?.find((repair) => repair.id === repairId);
+    if (!proposal) return;
+    const result = applyGameplayRepairProposal(state.project.sharedLevelDesignState.gameplay.graph, proposal);
+    const sharedLevelDesignState = synchronizeGameplayRepairResult(state.project.sharedLevelDesignState, result.graph, result.proposal, result.validation);
+    const project = {
+      ...state.project,
+      gameplayGraph: result.graph,
+      sharedLevelDesignState,
+      metadata: { ...state.project.metadata, updatedAt: Date.now() },
+    };
+    set({ project, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    logEvent("gameplay_repair_applied", { repairId, conflictId: proposal.conflictId, validAfterRepair: result.validation.valid });
+  },
+  regenerateLocal: (scope) => {
+    const state = get();
+    const seed = state.project.seed + 1;
+    const constraints = state.project.constraints;
+    logEvent("local_regeneration_requested", { ...scope, seed });
+    const variants = generateVariants(
+      state.project.strokes,
+      constraints,
+      buildField(state.project),
+      seed,
+      state.project.metadata.canvasWidth,
+      state.project.metadata.canvasHeight,
+      {
+        sharedState: state.project.sharedLevelDesignState,
+        regeneration: {
+          ...scope,
+          mode: "local",
+          previousVariants: state.project.variants,
+        },
+      },
+    );
+    set({
+      project: {
+        ...state.project,
+        seed,
+        variants,
+        activeVariantId: state.project.activeVariantId ?? variants[0]?.id ?? null,
+        workingVariantId: state.project.workingVariantId ?? variants[0]?.id ?? null,
+        metadata: { ...state.project.metadata, updatedAt: Date.now() },
+      },
+      undoHistory: commit(state.project, state.undoHistory),
+      redoHistory: [],
+    });
+    logEvent("local_regeneration_completed", { variantIds: variants.map((variant) => variant.id), seed });
   },
   selectInterpretationAlternative: (interpretationId, alternativeId) => {
     const state = get();

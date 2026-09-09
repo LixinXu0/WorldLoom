@@ -1,10 +1,10 @@
 import { sketchStyles, strokeStyle } from "../../core/sketch/semanticStyles";
 import { AssetVisual } from "../assets/AssetVisual";
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetById } from "../../assets/mockAssetLibrary";
 import { boundsForRawStroke } from "../../core/sketch/rawStrokeGeometry";
 import type { RawStroke } from "../../core/sketch/types";
-import type { GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType } from "../../core/types";
+import { GameplayGraphLayer } from "../gameplay/GameplayGraphLayer";
 import { useWorldloomStore } from "../../store/useWorldloomStore";
 
 function strokePoints(stroke: RawStroke): string {
@@ -15,7 +15,7 @@ type BoardCamera = { x: number; y: number; zoom: number };
 type GameplayTool = "select" | "spawn" | "stronghold" | "npc" | "patrol";
 
 export function AssetSandboxCanvas({ camera, placementMode = false, onSemanticPlacement, showEditLayer = true, showSketchLayer, showGameplayLayer = true, gameplayEditing = false, gameplayTool = "select", baseMapUrl, readOnly = false }: { camera?: BoardCamera; placementMode?: boolean; onSemanticPlacement?: (point: { x: number; y: number }, targetId?: string) => void; showEditLayer?: boolean; /** @deprecated alias for older callers */ showSketchLayer?: boolean; showGameplayLayer?: boolean; gameplayEditing?: boolean; gameplayTool?: GameplayTool; baseMapUrl?: string; readOnly?: boolean } = {}) {
-  const { project, activeTool, placeAssetInstance, selectSketchIds, beginRawStroke, appendRawStrokePoint, completeRawStroke, deleteRawStroke, deleteSketchMark, moveAssetInstance, duplicateAssetInstance, toggleAssetLock, deleteAssetInstance, interpretTogether } = useWorldloomStore();
+  const { project, activeTool, selected: appSelected, select, placeAssetInstance, selectSketchIds, beginRawStroke, appendRawStrokePoint, completeRawStroke, deleteRawStroke, deleteSketchMark, moveAssetInstance, duplicateAssetInstance, toggleAssetLock, deleteAssetInstance, interpretTogether } = useWorldloomStore();
   const editLayerVisible = showEditLayer && (showSketchLayer ?? true);
   const selected = new Set(project.sketchSelection.ids);
   const dragRef = useRef<{ assetId: string; x: number; y: number } | null>(null);
@@ -27,6 +27,12 @@ export function AssetSandboxCanvas({ camera, placementMode = false, onSemanticPl
   const [contextMenu, setContextMenu] = useState<{ assetId: string; x: number; y: number } | null>(null);
   const [strokeContextMenu, setStrokeContextMenu] = useState<{ strokeId: string; x: number; y: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+
+  // Keep the upgraded Gameplay Graph as the canonical gameplay layer.
+  const gameplayGraph = project.sharedLevelDesignState.gameplay.graph;
+  const selectedGameplayNodeIds = appSelected?.kind === "gameplay-node" ? [appSelected.id] : [];
+  const selectedGameplayRelationIds = appSelected?.kind === "gameplay-relation" ? [appSelected.id] : [];
+  const selectedGameplayRouteIds = appSelected?.kind === "gameplay-route" ? [appSelected.id] : [];
   const openSelectedElement = (assetId: string) => {
     selectSketchIds([assetId]);
     const hypothesis = useWorldloomStore.getState().project.compositionHypothesis;
@@ -171,7 +177,31 @@ export function AssetSandboxCanvas({ camera, placementMode = false, onSemanticPl
         return <line markerEnd={`url(#arrow-${color})`} key={relation.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={`var(--${color})`} strokeWidth="2" strokeDasharray={relation.relationType === "related_to" || relation.relationType === "relates_to" ? "5 5" : undefined} />;
       })}
     </svg>
-    <GameplaySemanticOverlay visible={showGameplayLayer} editing={gameplayEditing} tool={gameplayTool} camera={camera} />
+    {showGameplayLayer && (
+      <GameplayGraphLayer
+        graph={gameplayGraph}
+        width={project.metadata.canvasWidth}
+        height={project.metadata.canvasHeight}
+        selectedNodeIds={selectedGameplayNodeIds}
+        selectedRelationIds={selectedGameplayRelationIds}
+        selectedRouteIds={selectedGameplayRouteIds}
+        onSelectNode={(nodeId) => {
+          if (!canSelect) return;
+          selectSketchIds([]);
+          select({ kind: "gameplay-node", id: nodeId });
+        }}
+        onSelectRelation={(relationId) => {
+          if (!canSelect) return;
+          selectSketchIds([]);
+          select({ kind: "gameplay-relation", id: relationId });
+        }}
+        onSelectRoute={(routeId) => {
+          if (!canSelect) return;
+          selectSketchIds([]);
+          select({ kind: "gameplay-route", id: routeId });
+        }}
+      />
+    )}
     {project.sketchState.assetInstances.map((asset) => {
       const definition = assetById(asset.assetDefinitionId);
       return <button
@@ -230,50 +260,3 @@ export function AssetSandboxCanvas({ camera, placementMode = false, onSemanticPl
   </div>;
 }
 
-function GameplaySemanticOverlay({ visible, editing, tool, camera }: { visible: boolean; editing: boolean; tool: GameplayTool; camera?: BoardCamera }) {
-  const { project, gameplaySelectionId, selectGameplayElement, createGameplayElement, moveGameplayElement, resizeGameplayElement, moveGameplayWaypoint, addGameplayWaypoint, deleteGameplayWaypoint, reverseGameplayRoute, deleteGameplayElement, selectSketchIds } = useWorldloomStore();
-  const [context, setContext] = useState<{ id: string; point: GameplaySemanticPoint } | null>(null);
-  const dragRef = useRef<{ id: string; kind: "element" | "resize" | "waypoint"; index?: number } | null>(null);
-  const layer = project.gameplaySemanticLayer ?? { elements: [], locked: project.mapLayers?.gameplayLocked ?? false };
-  const locked = layer.locked || Boolean(project.mapLayers?.gameplayLocked);
-  const pointFromEvent = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const rect = event.currentTarget.closest(".board-viewport")?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
-    const zoom = camera?.zoom ?? 1;
-    return { x: Math.max(0, Math.min(project.metadata.canvasWidth, (event.clientX - rect.left - (camera?.x ?? 0)) / zoom / rect.width * project.metadata.canvasWidth)), y: Math.max(0, Math.min(project.metadata.canvasHeight, (event.clientY - rect.top - (camera?.y ?? 0)) / zoom / rect.height * project.metadata.canvasHeight)) };
-  };
-  const startDrag = (event: ReactPointerEvent<SVGGElement>, id: string, kind: "element" | "resize" | "waypoint", index?: number) => {
-    if (!editing || locked) return;
-    event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
-    selectGameplayElement(id); dragRef.current = { id, kind, index };
-  };
-  const label = (type: GameplaySemanticType) => ({ player_spawn: "SPAWN", enemy_stronghold: "STRONGHOLD", npc: "NPC", npc_patrol_route: "PATROL" })[type];
-  const color = (type: GameplaySemanticType) => ({ player_spawn: "#20c7ee", enemy_stronghold: "#ff526b", npc: "#ffbb3e", npc_patrol_route: "#b27aff" })[type];
-  const routePoints = (item: GameplaySemanticElement) => item.waypoints?.length ? item.waypoints : [item.startPoint ?? item.position, item.endPoint ?? item.position];
-  if (!visible) return null;
-  return <>
-    <svg className="gameplay-semantic-layer" viewBox={`0 0 ${project.metadata.canvasWidth} ${project.metadata.canvasHeight}`} preserveAspectRatio="none" style={{ pointerEvents: editing ? "auto" : "none" }}
-      onPointerDown={(event) => {
-        if (!editing || locked || event.button !== 0) return;
-        const point = pointFromEvent(event);
-        const type = tool === "spawn" ? "player_spawn" : tool === "stronghold" ? "enemy_stronghold" : tool === "npc" ? "npc" : tool === "patrol" ? "npc_patrol_route" : null;
-        if (type) createGameplayElement(type, point);
-        else selectGameplayElement(null);
-      }}
-      onPointerMove={(event) => {
-        const drag = dragRef.current; if (!drag || locked) return;
-        const point = pointFromEvent(event); const item = layer.elements.find((element) => element.id === drag.id); if (!item) return;
-        if (drag.kind === "element") moveGameplayElement(drag.id, point);
-        if (drag.kind === "resize") resizeGameplayElement(drag.id, { width: Math.abs(point.x - item.position.x) * 2, height: Math.abs(point.y - item.position.y) * 2 });
-        if (drag.kind === "waypoint" && drag.index !== undefined) moveGameplayWaypoint(drag.id, drag.index, point);
-      }}
-      onPointerUp={(event) => { dragRef.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}>
-      <defs><marker id="gameplay-route-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 9 5 1 9" fill="none" stroke="#b27aff" strokeWidth="1.5" /></marker></defs>
-      {layer.elements.map((item) => {
-        const selected = gameplaySelectionId === item.id; const c = color(item.type); const x = item.position.x; const y = item.position.y;
-        if (item.type === "npc_patrol_route") { const points = routePoints(item); return <g key={item.id} className={`gameplay-element route ${selected ? "selected" : ""}`} onContextMenu={(event)=>{event.preventDefault();event.stopPropagation();selectGameplayElement(item.id);setContext({id:item.id,point:{x,y}});}}><polyline points={points.map(point=>`${point.x},${point.y}`).join(" ")} fill="none" stroke={c} strokeWidth={selected ? 5 : 3} strokeDasharray="9 5" markerEnd="url(#gameplay-route-arrow)" onPointerDown={(event)=>startDrag(event,item.id,"element")}/>{points.map((point,index)=><g key={index} onPointerDown={(event)=>startDrag(event,item.id,"waypoint",index)}><circle cx={point.x} cy={point.y} r={index === 0 || index === points.length-1 ? 10 : 6} fill={index === 0 ? "#20c7ee" : index === points.length-1 ? "#ff526b" : c} stroke="#0b1c27" strokeWidth="3"/><text x={point.x+11} y={point.y-10} className="gameplay-waypoint-label">{index === 0 ? "Start" : index === points.length-1 ? "End" : `${index}`}</text></g>)}<text x={points[0].x} y={points[0].y-20} className="gameplay-label" fill={c}>{item.name}</text></g>; }
-        const isRegion = item.type === "enemy_stronghold"; return <g key={item.id} className={`gameplay-element ${item.type} ${selected ? "selected" : ""}`} onPointerDown={(event)=>startDrag(event,item.id,"element")} onContextMenu={(event)=>{event.preventDefault();event.stopPropagation();selectGameplayElement(item.id);setContext({id:item.id,point:{x,y}});}}>{isRegion && <><rect x={x-item.region.width/2} y={y-item.region.height/2} width={item.region.width} height={item.region.height} rx="8" fill="rgba(255,82,107,.13)" stroke={c} strokeWidth={selected ? 4 : 2.5} strokeDasharray="8 4"/><g onPointerDown={(event)=>startDrag(event,item.id,"resize")}><rect x={x+item.region.width/2-8} y={y+item.region.height/2-8} width="16" height="16" fill={c} /></g></>}<circle cx={x} cy={y} r={isRegion ? 18 : 15} fill="#0b1c27" stroke={c} strokeWidth="4"/><text x={x} y={y+5} textAnchor="middle" className="gameplay-icon" fill={c}>{item.type === "player_spawn" ? "↟" : item.type === "npc" ? "●" : "⚑"}</text><text x={x+22} y={y-16} className="gameplay-label" fill={c}>{item.name}</text><text x={x+22} y={y} className="gameplay-type" fill={c}>{label(item.type)}</text></g>;
-      })}
-    </svg>
-    {context && (() => { const item = layer.elements.find((element) => element.id === context.id); if (!item) return null; return <div className="gameplay-context-menu" style={{ left: `${context.point.x / project.metadata.canvasWidth * 100}%`, top: `${context.point.y / project.metadata.canvasHeight * 100}%` }}><button onClick={()=>{selectGameplayElement(item.id);setContext(null);}}>Edit</button><button onClick={()=>{selectGameplayElement(item.id);setContext(null);}}>Move</button>{item.type === "enemy_stronghold" && <button onClick={()=>{resizeGameplayElement(item.id,{width:item.region.width+30,height:item.region.height+20});setContext(null);}}>Change Size</button>}{item.type === "npc_patrol_route" && <><button onClick={()=>{addGameplayWaypoint(item.id,{x:item.position.x+70,y:item.position.y+40});setContext(null);}}>Add Waypoint</button><button onClick={()=>{reverseGameplayRoute(item.id);setContext(null);}}>Reverse Direction</button></>}<button onClick={()=>{if(item.sourceDoodleId!=="manual") selectSketchIds([item.sourceDoodleId]);setContext(null);}}>Focus Source Doodle</button><button className="danger-action" onClick={()=>{deleteGameplayElement(item.id);setContext(null);}}>Delete</button></div>; })()}
-  </>;
-}

@@ -45,7 +45,7 @@ export function CanvasDiffPanel() {
     useState<string | null>(null);
 
   const [message, setMessage] = useState(
-    "Set the current canvas as the baseline screenshot first.",
+    "请先把当前画板设置为基准截图。",
   );
 
   const width = project.metadata.canvasWidth;
@@ -75,13 +75,13 @@ export function CanvasDiffPanel() {
     resetInterpretation();
 
     setMessage(
-      "Baseline saved. You can now draw new sketch marks.",
+      "基准截图已保存。现在可以继续绘制新的涂鸦。",
     );
   };
 
   const compareWithBaseline = async () => {
     if (!baselineImage) {
-      setMessage("Click “Set Current Canvas as Baseline” first.");
+      setMessage("请先点击“设置当前画板为基准”。");
       return;
     }
 
@@ -99,10 +99,10 @@ export function CanvasDiffPanel() {
     resetInterpretation();
 
     if (result.changedPixelCount === 0) {
-      setMessage("No new sketch marks were detected.");
+      setMessage("没有检测到新增涂鸦。");
     } else {
       setMessage(
-        `Detection complete: ${result.changedPixelCount} changed pixels found.`,
+        `检测完成，共发现 ${result.changedPixelCount} 个变化像素。`,
       );
     }
   };
@@ -112,7 +112,7 @@ export function CanvasDiffPanel() {
       !diffResult ||
       diffResult.changedPixelCount === 0
     ) {
-      setQwenError("Detect valid new sketch marks first.");
+      setQwenError("请先检测有效的新增涂鸦。");
       return;
     }
 
@@ -132,7 +132,7 @@ export function CanvasDiffPanel() {
       setQwenError(
         error instanceof Error
           ? error.message
-          : "Qwen interpretation failed.",
+          : "千问识别失败。",
       );
     } finally {
       setIsCallingQwen(false);
@@ -141,7 +141,7 @@ export function CanvasDiffPanel() {
 
   const confirmSelectedMeaning = () => {
     if (!qwenResult || !diffResult || !currentImage) {
-      setQwenError("There is no interpretation result to confirm.");
+      setQwenError("当前没有可以确认的识别结果。");
       return;
     }
 
@@ -151,7 +151,7 @@ export function CanvasDiffPanel() {
       selectedCandidateIndex === null &&
       !trimmedCustomMeaning
     ) {
-      setQwenError("Select a candidate interpretation or enter your own.");
+      setQwenError("请选择一个候选含义，或填写自己的含义。");
       return;
     }
 
@@ -166,7 +166,7 @@ export function CanvasDiffPanel() {
       selectedLabel:
         trimmedCustomMeaning ||
         selectedCandidate?.label ||
-        "Unnamed interpretation",
+        "未命名含义",
       selectedDescription:
         trimmedCustomMeaning ||
         selectedCandidate?.description ||
@@ -183,7 +183,7 @@ export function CanvasDiffPanel() {
     resetInterpretation();
 
     setMessage(
-      "Interpretation confirmed. The current canvas is now the baseline for the next round.",
+      "含义已经确认，当前画板已自动成为下一轮的基准。",
     );
   };
 
@@ -197,7 +197,7 @@ export function CanvasDiffPanel() {
       }}
     >
       <h3 style={{ marginBottom: "10px" }}>
-        New Sketch Interpretation
+        新增涂鸦识别
       </h3>
 
       <div
@@ -209,14 +209,14 @@ export function CanvasDiffPanel() {
         }}
       >
         <button onClick={saveBaseline}>
-          Set Current Canvas as Baseline
+          设置当前画板为基准
         </button>
 
         <button
           className="primary"
           onClick={() => void compareWithBaseline()}
         >
-          Detect New Sketch Marks
+          检测新增涂鸦
         </button>
 
         <button
@@ -228,8 +228,8 @@ export function CanvasDiffPanel() {
           onClick={() => void sendToQwen()}
         >
           {isCallingQwen
-            ? "Qwen is interpreting..."
-            : "Send to Qwen"}
+            ? "千问识别中……"
+            : "发送给千问"}
         </button>
       </div>
 
@@ -248,21 +248,21 @@ export function CanvasDiffPanel() {
           }}
         >
           <span>
-            Changed pixels: {diffResult.changedPixelCount}
+            变化像素：{diffResult.changedPixelCount}
           </span>
 
           <span>
-            Crop position: ({diffResult.boundingBox.x},{" "}
+            裁剪位置：({diffResult.boundingBox.x},{" "}
             {diffResult.boundingBox.y})
           </span>
 
           <span>
-            Crop size: {diffResult.boundingBox.width} ×{" "}
+            裁剪尺寸：{diffResult.boundingBox.width} ×{" "}
             {diffResult.boundingBox.height}
           </span>
 
           <span>
-            Base64 length: {diffResult.base64.length}
+            Base64 长度：{diffResult.base64.length}
           </span>
         </div>
       )}
@@ -277,21 +277,21 @@ export function CanvasDiffPanel() {
       >
         {baselineImage && (
           <Preview
-            title="Previous canvas"
+            title="上一张画板"
             image={baselineImage}
           />
         )}
 
         {currentImage && (
           <Preview
-            title="Current canvas"
+            title="当前画板"
             image={currentImage}
           />
         )}
 
         {diffResult && (
           <Preview
-            title="Cropped new sketch"
+            title="裁剪后的新增涂鸦"
             image={diffResult.dataUrl}
           />
         )}
@@ -320,10 +320,10 @@ export function CanvasDiffPanel() {
             background: "#f1fbf5",
           }}
         >
-          <h3>Select a sketch interpretation</h3>
+          <h3>请选择涂鸦含义</h3>
 
           <p style={{ margin: "8px 0" }}>
-            Qwen interpretation: {qwenResult.summary}
+            千问理解：{qwenResult.summary}
           </p>
 
           <div style={{ display: "grid", gap: "8px" }}>
@@ -352,7 +352,7 @@ export function CanvasDiffPanel() {
                   <strong>{candidate.label}</strong>
                   <span>{candidate.description}</span>
                   <small>
-                    Confidence:
+                    置信度：
                     {Math.round(
                       candidate.confidence * 100,
                     )}
@@ -370,7 +370,7 @@ export function CanvasDiffPanel() {
               marginTop: "10px",
             }}
           >
-            None of these? Enter your own interpretation
+            都不正确？填写自己的含义
 
             <input
               value={customMeaning}
@@ -379,7 +379,7 @@ export function CanvasDiffPanel() {
                 setSelectedCandidateIndex(null);
                 setQwenError(null);
               }}
-              placeholder="Example: a path leading to an underground area"
+              placeholder="例如：这里是一条通往地下区域的道路"
               style={{
                 width: "100%",
                 minHeight: "34px",
@@ -394,7 +394,7 @@ export function CanvasDiffPanel() {
             onClick={confirmSelectedMeaning}
             style={{ marginTop: "10px" }}
           >
-            Confirm This Interpretation
+            确认这个含义
           </button>
         </div>
       )}
@@ -408,7 +408,7 @@ export function CanvasDiffPanel() {
           }}
         >
           <h3>
-            Confirmed Sketches ({confirmedDoodles.length})
+            已确认的涂鸦（{confirmedDoodles.length}）
           </h3>
 
           <div
@@ -453,10 +453,10 @@ export function CanvasDiffPanel() {
                   </p>
 
                   <small>
-                    Source:
+                    来源：
                     {item.source === "custom"
-                      ? "Player input"
-                      : "Qwen candidate"}
+                      ? "玩家输入"
+                      : "千问候选"}
                   </small>
                 </div>
 
@@ -465,7 +465,7 @@ export function CanvasDiffPanel() {
                     removeConfirmedDoodle(item.id)
                   }
                 >
-                  Delete
+                  删除
                 </button>
               </div>
             ))}

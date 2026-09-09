@@ -1,12 +1,9 @@
-import ctypes
 import hashlib
 import json
 import mimetypes
 import os
 import re
 import subprocess
-import threading
-import time
 import urllib.request
 
 from copy import deepcopy
@@ -23,22 +20,15 @@ from PIL import Image, ImageDraw
 HOST = "127.0.0.1"
 PORT = 4318
 
-GODOT_PROJECT_PATH = (
-    Path(__file__).resolve().parent
-    / "godot-project"
+GODOT_PROJECT_PATH = Path(
+    r"C:\2\CHI\test1\worldloom-godot-test"
 )
 
-# Keep the requested install path first, with a fallback for the unpacked
-# Godot archive layout currently present on this machine.
 GODOT_EXECUTABLE = Path(
-    r"D:\Downloads\Godot\_v4.7.1-stable\_win64.exe"
+    r"C:\2\CHI\godot"
+    r"\Godot_v4.7.1-stable_win64.exe"
+    r"\Godot_v4.7.1-stable_win64.exe"
 )
-if not GODOT_EXECUTABLE.is_file():
-    unpacked_executable = Path(
-        r"D:\Downloads\Godot_v4.7.1-stable_win64.exe\Godot_v4.7.1-stable_win64.exe"
-    )
-    if unpacked_executable.is_file():
-        GODOT_EXECUTABLE = unpacked_executable
 
 MAP_OUTPUT_PATH = (
     GODOT_PROJECT_PATH
@@ -48,6 +38,21 @@ MAP_OUTPUT_PATH = (
 PLAN_OUTPUT_PATH = (
     GODOT_PROJECT_PATH
     / "worldloom-generation-plan.json"
+)
+
+CONTRACT_OUTPUT_PATH = (
+    GODOT_PROJECT_PATH
+    / "worldloom-generation-contract.json"
+)
+
+VALIDATION_OUTPUT_PATH = (
+    GODOT_PROJECT_PATH
+    / "worldloom-gameplay-validation.json"
+)
+
+REGENERATION_SCOPE_OUTPUT_PATH = (
+    GODOT_PROJECT_PATH
+    / "worldloom-regeneration-scope.json"
 )
 
 MANIFEST_PATH = (
@@ -107,7 +112,6 @@ class WorldloomBridgeHandler(
         self.end_headers()
         self.wfile.write(body)
 
-
     def send_file(
         self,
         status_code: int,
@@ -142,13 +146,11 @@ class WorldloomBridgeHandler(
         self.end_headers()
         self.wfile.write(body)
 
-
     def do_OPTIONS(self) -> None:
         self.send_json(
             200,
             {"ok": True},
         )
-
 
     def do_GET(self) -> None:
         try:
@@ -200,25 +202,7 @@ class WorldloomBridgeHandler(
                 },
             )
 
-
     def do_POST(self) -> None:
-        if self.path == "/open":
-            try:
-                validate_local_paths()
-                open_generated_scene()
-                self.send_json(200, {
-                    "ok": True,
-                    "message": "Godot opened.",
-                    "scenePath": "res://generated/worldloom_generated_map.tscn",
-                    "savedAssets": [],
-                })
-            except Exception as error:
-                self.send_json(500, {
-                    "error": "Unable to open Godot.",
-                    "details": str(error),
-                })
-            return
-
         if self.path != "/generate":
             self.send_json(
                 404,
@@ -263,7 +247,8 @@ class WorldloomBridgeHandler(
             )
 
             generation_plan = (
-                request_data.get(
+                request_data.get("plan")
+                or request_data.get(
                     "generationPlan"
                 )
             )
@@ -299,6 +284,38 @@ class WorldloomBridgeHandler(
                     "Generated assets must be an array."
                 )
 
+            generation_contract = (
+                request_data.get(
+                    "generationContract"
+                )
+            )
+
+            if generation_contract is None:
+                generation_contract = (
+                    map_data.get(
+                        "generationContract"
+                    )
+                )
+
+            validation = request_data.get(
+                "validation"
+            )
+
+            if validation is None:
+                validation = map_data.get(
+                    "validation"
+                )
+
+            regeneration_scope = (
+                normalize_regeneration_scope(
+                    request_data.get(
+                        "regenerationScope"
+                    ),
+                    map_data,
+                    generation_contract,
+                )
+            )
+
             validate_local_paths()
             scan_godot_textures()
 
@@ -316,6 +333,40 @@ class WorldloomBridgeHandler(
                 )
             )
 
+            map_data = deepcopy(
+                map_data
+            )
+
+            map_data[
+                "generationContract"
+            ] = generation_contract
+
+            map_data[
+                "validation"
+            ] = validation
+
+            map_data[
+                "regenerationScope"
+            ] = regeneration_scope
+
+            resolved_plan[
+                "generationContract"
+            ] = generation_contract
+
+            resolved_plan[
+                "validation"
+            ] = validation
+
+            resolved_plan[
+                "regenerationScope"
+            ] = regeneration_scope
+
+            resolved_plan[
+                "generationMode"
+            ] = regeneration_scope[
+                "mode"
+            ]
+
             write_json(
                 MAP_OUTPUT_PATH,
                 map_data,
@@ -326,6 +377,48 @@ class WorldloomBridgeHandler(
                 resolved_plan,
             )
 
+            write_json(
+                CONTRACT_OUTPUT_PATH,
+                generation_contract
+                if isinstance(
+                    generation_contract,
+                    dict,
+                )
+                else {},
+            )
+
+            write_json(
+                VALIDATION_OUTPUT_PATH,
+                validation
+                if isinstance(
+                    validation,
+                    dict,
+                )
+                else {},
+            )
+
+            write_json(
+                REGENERATION_SCOPE_OUTPUT_PATH,
+                regeneration_scope,
+            )
+
+            print(
+                "Worldloom generation mode:",
+                regeneration_scope["mode"],
+            )
+
+            if (
+                regeneration_scope["mode"]
+                == "local"
+            ):
+                print(
+                    "Local regeneration scope:",
+                    json.dumps(
+                        regeneration_scope,
+                        ensure_ascii=False,
+                    ),
+                )
+
             import_godot_resources()
             run_generation()
 
@@ -333,13 +426,32 @@ class WorldloomBridgeHandler(
                 200,
                 {
                     "ok": True,
+
                     "message":
-                        "Worldloom scene generated.",
+                        (
+                            "Worldloom local scene "
+                            "regenerated."
+                            if regeneration_scope[
+                                "mode"
+                            ] == "local"
+                            else
+                            "Worldloom scene generated."
+                        ),
+
                     "scenePath":
                         "res://generated/"
                         "worldloom_generated_map.tscn",
+
                     "savedAssets":
                         saved_assets,
+
+                    "mode":
+                        regeneration_scope[
+                            "mode"
+                        ],
+
+                    "regenerationScope":
+                        regeneration_scope,
                 },
             )
 
@@ -375,7 +487,6 @@ class WorldloomBridgeHandler(
                 },
             )
 
-
     def log_message(
         self,
         message_format: str,
@@ -409,6 +520,102 @@ def write_json(
         ),
         encoding="utf-8",
     )
+
+
+def normalize_regeneration_scope(
+    request_scope,
+    map_data: dict,
+    generation_contract,
+) -> dict:
+    scope = request_scope
+
+    if not isinstance(scope, dict):
+        scope = map_data.get(
+            "regenerationScope"
+        )
+
+    if (
+        not isinstance(scope, dict)
+        and isinstance(
+            generation_contract,
+            dict,
+        )
+    ):
+        scope = generation_contract.get(
+            "regeneration"
+        )
+
+    if not isinstance(scope, dict):
+        scope = {}
+
+    mode = scope.get(
+        "mode",
+        "full",
+    )
+
+    if mode not in (
+        "full",
+        "local",
+    ):
+        raise ValueError(
+            "Regeneration mode must be "
+            "'full' or 'local'."
+        )
+
+    def string_list(
+        key: str,
+    ) -> list[str]:
+        value = scope.get(
+            key,
+            [],
+        )
+
+        if not isinstance(
+            value,
+            list,
+        ):
+            return []
+
+        return [
+            str(item)
+            for item in value
+            if item is not None
+        ]
+
+    return {
+        "mode":
+            mode,
+
+        "targetElementIds":
+            string_list(
+                "targetElementIds"
+            ),
+
+        "targetGameplayNodeIds":
+            string_list(
+                "targetGameplayNodeIds"
+            ),
+
+        "lockedElementIds":
+            string_list(
+                "lockedElementIds"
+            ),
+
+        "lockedGameplayNodeIds":
+            string_list(
+                "lockedGameplayNodeIds"
+            ),
+
+        "targetRoomIds":
+            string_list(
+                "targetRoomIds"
+            ),
+
+        "targetEdgeIds":
+            string_list(
+                "targetEdgeIds"
+            ),
+    }
 
 
 def validate_local_paths() -> None:
@@ -490,8 +697,8 @@ def infer_texture_category(
                 "ground",
                 "floor",
                 "tile",
-                "ground",
-                "terrain",
+                "地面",
+                "地形",
             ),
         ),
         (
@@ -500,8 +707,8 @@ def infer_texture_category(
                 "path",
                 "road",
                 "rail",
-                "road",
-                "path",
+                "道路",
+                "路径",
             ),
         ),
         (
@@ -511,8 +718,8 @@ def infer_texture_category(
                 "player",
                 "npc",
                 "enemy",
-                "character",
-                "enemy",
+                "角色",
+                "敌人",
             ),
         ),
         (
@@ -521,8 +728,8 @@ def infer_texture_category(
                 "building",
                 "house",
                 "tower",
-                "building",
-                "house",
+                "建筑",
+                "房屋",
             ),
         ),
         (
@@ -531,8 +738,8 @@ def infer_texture_category(
                 "wall",
                 "rock",
                 "barrier",
-                "obstacle",
-                "wall",
+                "障碍",
+                "墙",
             ),
         ),
     ]
@@ -1510,7 +1717,6 @@ def run_godot_command(
         command,
         capture_output=True,
         text=True,
-        errors="replace",
         timeout=timeout,
         check=False,
     )
@@ -1562,10 +1768,6 @@ def run_generation() -> None:
         timeout=60,
     )
 
-    open_generated_scene()
-
-
-def open_generated_scene() -> None:
     subprocess.Popen(
         [
             str(GODOT_EXECUTABLE),
@@ -1578,42 +1780,6 @@ def open_generated_scene() -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-
-    # Godot can launch behind the browser or a previous editor window.  Bring
-    # the generated scene forward after the editor has had a moment to create
-    # its native window, so the Generate action has visible feedback.
-    threading.Thread(
-        target=focus_generated_scene_window,
-        daemon=True,
-    ).start()
-
-
-def focus_generated_scene_window() -> None:
-    if os.name != "nt":
-        return
-
-    window_title = (
-        "worldloom_generated_map.tscn - "
-        "Worldloom Generated Map - Godot Engine"
-    )
-    user32 = ctypes.windll.user32
-    deadline = time.monotonic() + 10
-
-    while time.monotonic() < deadline:
-        window_handle = user32.FindWindowW(
-            None,
-            window_title,
-        )
-        if window_handle:
-            user32.ShowWindow(
-                window_handle,
-                9,
-            )
-            user32.SetForegroundWindow(
-                window_handle,
-            )
-            return
-        time.sleep(0.25)
 
 
 def main() -> None:

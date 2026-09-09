@@ -38,6 +38,14 @@ import {
   refreshAssetManifest,
 } from "../../assets/assetManifestClient";
 
+import {
+  buildPlayableGenerationContract,
+} from "../../core/contract/buildPlayableGenerationContract";
+
+import type {
+  PlayableGenerationContract,
+} from "../../core/contract/types";
+
 
 const MAP_BACKGROUND_REQUEST_ID =
   "worldloom-map-background";
@@ -56,13 +64,13 @@ function ExistingAssetThumbnail({
           height: "72px",
           display: "grid",
           placeItems: "center",
-          border: "1px solid var(--border)",
-          background: "var(--elevated)",
-          color: "var(--muted)",
+          border: "1px solid #c8c5bd",
+          background: "#f4f1ea",
+          color: "#686868",
           fontSize: "11px",
         }}
       >
-        No preview
+        无预览
       </div>
     );
   }
@@ -79,8 +87,8 @@ function ExistingAssetThumbnail({
           width: "72px",
           height: "72px",
           objectFit: "contain",
-          border: "1px solid var(--border)",
-          background: "var(--elevated)",
+          border: "1px solid #c8c5bd",
+          background: "#f4f1ea",
         }}
       />
     );
@@ -107,8 +115,8 @@ function ExistingAssetThumbnail({
         height: "72px",
         display: "grid",
         placeItems: "center",
-        border: "1px solid var(--border)",
-        background: "var(--elevated)",
+        border: "1px solid #c8c5bd",
+        background: "#f4f1ea",
       }}
     >
       <div
@@ -127,7 +135,7 @@ function ExistingAssetThumbnail({
 
           background:
             asset.visual.color ??
-            "var(--muted)",
+            "#d7d2c8",
 
           border:
             "1px solid rgba(0, 0, 0, 0.18)",
@@ -139,22 +147,17 @@ function ExistingAssetThumbnail({
 
 
 export function MapUnderstandingPanel() {
-  const { project, setMapLayerVisible, setMapBaseMapUrl, setGeneratedOutput } =
+  const { project } =
     useWorldloomStore();
 
   const {
-    confirmedDoodles: storedConfirmedDoodles,
-    finalMapUnderstanding: storedFinalMapUnderstanding,
+    confirmedDoodles,
+    finalMapUnderstanding,
     updateConfirmedDoodle,
     removeConfirmedDoodle,
     confirmOverallMap,
     reopenOverallMap,
   } = useDoodleInterpretationStore();
-  const projectDoodles = project.mapUnderstandingSnapshot && typeof project.mapUnderstandingSnapshot === "object" && Array.isArray((project.mapUnderstandingSnapshot as { elements?: unknown[] }).elements)
-    ? ((project.mapUnderstandingSnapshot as { elements: Array<{ id: string; type: string; position?: { x: number; y: number }; roles?: string[] }> }).elements).map((element) => ({ id: element.id, confirmedAt: Date.now(), imageDataUrl: "", aiSummary: element.roles?.[0] ?? "Map element", selectedLabel: element.type, selectedDescription: element.roles?.[0] ?? "Confirmed map element", source: "custom" as const, boundingBox: element.position ? { x: element.position.x, y: element.position.y, width: 72, height: 72 } : null }))
-    : [];
-  const confirmedDoodles = storedConfirmedDoodles.length ? storedConfirmedDoodles : projectDoodles;
-  const finalMapUnderstanding = storedFinalMapUnderstanding ?? (project.mapUnderstandingSnapshot ? { id: "project-map-understanding", confirmedAt: project.mapUnderstandingSnapshot && typeof project.mapUnderstandingSnapshot === "object" && "confirmedAt" in project.mapUnderstandingSnapshot ? Number((project.mapUnderstandingSnapshot as { confirmedAt?: number }).confirmedAt) : Date.now(), worldSetting: project.worldSetting?.text ?? "", doodles: projectDoodles } : null);
 
   const [
     generationPlan,
@@ -225,6 +228,30 @@ export function MapUnderstandingPanel() {
     finalMapUnderstanding,
   );
 
+  const [
+    generationContract,
+    setGenerationContract,
+  ] = useState<
+    PlayableGenerationContract | null
+  >(null);
+
+  const [
+    submittedContract,
+    setSubmittedContract,
+  ] = useState<
+    PlayableGenerationContract | null
+  >(null);
+
+
+  useEffect(() => {
+    setGenerationContract(null);
+    setSubmittedContract(null);
+  }, [
+    project.sharedLevelDesignState.revision,
+    project.seed,
+    canvasWidth,
+    canvasHeight,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,13 +384,13 @@ export function MapUnderstandingPanel() {
             "worldloom-map-background",
 
           name:
-            "Complete map background",
+            "整体地图底图",
 
           category:
             "map_background",
 
           rationale:
-            "Generate a unified environment background from the world setting and all map elements.",
+            "根据整体背景设定和全部地图元素生成统一的地图环境底图。",
 
           imagePrompt:
             finalPrompt,
@@ -399,6 +426,74 @@ export function MapUnderstandingPanel() {
       mapExport,
     );
   };
+
+
+  const compileGenerationContract =
+    (): PlayableGenerationContract => {
+      const contract =
+        buildPlayableGenerationContract(
+          project.sharedLevelDesignState,
+          {
+            projectId:
+              project.projectId,
+
+            seed:
+              project.seed,
+
+            canvasWidth,
+            canvasHeight,
+
+            regenerationMode:
+              "full",
+
+            compiledAt:
+              Date.now(),
+          },
+        );
+
+      setGenerationContract(
+        contract,
+      );
+
+      setSubmittedContract(
+        null,
+      );
+
+      setGenerationPlan(null);
+      setGeneratedAssets([]);
+      setGenerationError("");
+      setGodotSuccess("");
+
+      return contract;
+    };
+
+
+  const submitGenerationContract =
+    () => {
+      const contract =
+        generationContract ??
+        compileGenerationContract();
+
+      if (
+        contract.status ===
+        "invalid"
+      ) {
+        setGenerationError(
+          "Generation Contract 存在错误，请先解决冲突后再提交。",
+        );
+
+        return;
+      }
+
+      setSubmittedContract(
+        contract,
+      );
+
+      setGenerationError("");
+      setGodotSuccess(
+        "Generation Contract 已确认，可以进入生成阶段。",
+      );
+    };
 
 
   const generateGodotPlan =
@@ -444,7 +539,7 @@ export function MapUnderstandingPanel() {
         setGenerationError(
           error instanceof Error
             ? error.message
-            : "An unknown error occurred while generating the Godot plan.",
+            : "生成 Godot 计划时发生未知错误。",
         );
 
       } finally {
@@ -476,14 +571,12 @@ export function MapUnderstandingPanel() {
           );
 
         setGeneratedAssets(assets);
-        const baseMap = assets.find((asset) => asset.requestId === MAP_BACKGROUND_REQUEST_ID);
-        if (baseMap) { setMapBaseMapUrl(baseMap.imageUrl); setMapLayerVisible("baseMapVisible", true); }
 
       } catch (error) {
         setGenerationError(
           error instanceof Error
             ? error.message
-            : "An unknown error occurred while generating missing assets.",
+            : "生成缺失素材时发生未知错误。",
         );
 
       } finally {
@@ -575,13 +668,12 @@ export function MapUnderstandingPanel() {
             generatedAsset,
           ],
         );
-        if (requestId === MAP_BACKGROUND_REQUEST_ID) { setMapBaseMapUrl(generatedAsset.imageUrl); setMapLayerVisible("baseMapVisible", true); }
 
       } catch (error) {
         setGenerationError(
           error instanceof Error
             ? error.message
-            : "An unknown error occurred while regenerating the asset.",
+            : "重新生成素材时发生未知错误。",
         );
 
       } finally {
@@ -676,7 +768,7 @@ export function MapUnderstandingPanel() {
                 "object",
 
               rationale:
-                "The player chose to generate a custom AI version.",
+                "玩家选择使用 AI 生成自定义版本。",
 
               imagePrompt: [
                 sourceDoodle
@@ -759,7 +851,7 @@ export function MapUnderstandingPanel() {
             plan.missingAssets.length
         ) {
           throw new Error(
-          `There are ${plan.missingAssets.length} missing assets. Generate them first.`,
+            `发现 ${plan.missingAssets.length} 个待生成素材。请先生成这些素材。`,
           );
         }
 
@@ -771,26 +863,14 @@ export function MapUnderstandingPanel() {
           );
 
         setGodotSuccess(
-          `Godot map generated: ${result.scenePath}`,
+          `Godot 地图已生成：${result.scenePath}`,
         );
-        setGeneratedOutput({
-          status: "success",
-          scenePath: result.scenePath,
-          generatedAssetCount: generatedAssets.length,
-          generatedAt: Date.now(),
-          message: result.message,
-        });
 
       } catch (error) {
-        setGeneratedOutput({
-          status: "failed",
-          generatedAt: Date.now(),
-          message: error instanceof Error ? error.message : "Godot generation failed",
-        });
         setGenerationError(
           error instanceof Error
             ? error.message
-            : "An unknown error occurred while generating the map in Godot.",
+            : "一键生成到 Godot 时发生未知错误。",
         );
 
       } finally {
@@ -848,23 +928,22 @@ export function MapUnderstandingPanel() {
   ) {
     return (
       <section
-        className="generation-tools-panel"
         style={{
           width: "100%",
           padding: "12px",
           border:
-            "1px solid var(--border)",
-          background: "var(--panel)",
+            "1px solid #c8c5bd",
+          background: "#fbfaf6",
         }}
       >
-        <h3>Map Understanding</h3>
+        <h3>整体地图理解</h3>
 
         <p
           style={{
             marginTop: "8px",
           }}
         >
-          No confirmed sketch interpretations yet.
+          暂时没有已确认的涂鸦含义。
         </p>
       </section>
     );
@@ -873,18 +952,17 @@ export function MapUnderstandingPanel() {
 
   return (
     <section
-      className="generation-tools-panel"
       style={{
         width: "100%",
         padding: "12px",
 
         border: isConfirmed
-          ? "1px solid var(--relief)"
-          : "1px solid var(--border)",
+          ? "1px solid #1f7a4f"
+          : "1px solid #c8c5bd",
 
         background: isConfirmed
-          ? "color-mix(in srgb, var(--relief) 12%, var(--panel))"
-          : "var(--panel)",
+          ? "#f1fbf5"
+          : "#fbfaf6",
       }}
     >
       <div
@@ -898,16 +976,16 @@ export function MapUnderstandingPanel() {
         }}
       >
         <div>
-          <h3>Map Understanding</h3>
+          <h3>整体地图理解</h3>
 
           <p
             style={{
               marginTop: "5px",
             }}
           >
-            The system currently understands {" "}
+            系统目前理解到{" "}
             {confirmedDoodles.length}{" "}
-            map elements.
+            个地图元素。
           </p>
         </div>
 
@@ -928,7 +1006,7 @@ export function MapUnderstandingPanel() {
                 reopenOverallMap
               }
             >
-              Edit Map Understanding
+              重新修改
             </button>
 
             <button
@@ -938,7 +1016,7 @@ export function MapUnderstandingPanel() {
               }
               onClick={exportToGodot}
             >
-              Export Map Understanding
+              导出地图理解
             </button>
 
             <button
@@ -952,8 +1030,8 @@ export function MapUnderstandingPanel() {
               }
             >
               {isGenerating
-                ? "Planning..."
-                : "Generate Plan Only"}
+                ? "千问正在规划..."
+                : "仅生成计划"}
             </button>
 
             <button
@@ -968,8 +1046,8 @@ export function MapUnderstandingPanel() {
               }
             >
               {isGeneratingInGodot
-                ? "Generating and launching Godot..."
-                : "Generate in Godot"}
+                ? "正在生成并启动 Godot..."
+                : "一键生成到 Godot"}
             </button>
           </div>
         ) : (
@@ -979,7 +1057,7 @@ export function MapUnderstandingPanel() {
               confirmOverallMap
             }
           >
-            Confirm Map Understanding
+            确认整体地图理解
           </button>
         )}
       </div>
@@ -997,24 +1075,24 @@ export function MapUnderstandingPanel() {
               style={{
                 padding: "9px",
                 border:
-                  "1px solid var(--relief)",
-                background: "color-mix(in srgb, var(--relief) 10%, var(--panel))",
-                color: "var(--relief)",
+                  "1px solid #1f7a4f",
+                background: "#ffffff",
+                color: "#1f7a4f",
               }}
             >
-              Map understanding confirmed. The result is locked and ready for engine generation.
+              整体地图理解已经确认。当前结果已锁定，可以进入引擎生成阶段。
             </div>
 
             <div
               style={{
                 padding: "10px",
                 border:
-                  "1px solid var(--border)",
-                background: "var(--elevated)",
+                  "1px solid #c8c5bd",
+                background: "#ffffff",
               }}
             >
               <strong>
-                World Setting
+                整体背景设定
               </strong>
 
               <p
@@ -1024,8 +1102,8 @@ export function MapUnderstandingPanel() {
                   color:
                     finalMapUnderstanding
                       .worldSetting
-                      ? "var(--text)"
-                      : "var(--muted)",
+                      ? "#171717"
+                      : "#686868",
 
                   whiteSpace:
                     "pre-wrap",
@@ -1035,8 +1113,302 @@ export function MapUnderstandingPanel() {
               >
                 {finalMapUnderstanding
                   .worldSetting ||
-                  "Not set; using the default generation style."}
+                  "未设置，使用默认生成风格。"}
               </p>
+            </div>
+
+            <div
+              style={{
+                padding: "10px",
+                border:
+                  "1px solid #c8c5bd",
+                background: "#ffffff",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent:
+                    "space-between",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                <div>
+                  <strong>
+                    Playable Generation Contract
+                  </strong>
+
+                  <div
+                    style={{
+                      marginTop: "4px",
+                      fontSize: "12px",
+                      color: "#686868",
+                    }}
+                  >
+                    Scene + Spatial + Gameplay
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "6px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    disabled={
+                      isGenerating ||
+                      isGeneratingAssets ||
+                      isGeneratingInGodot
+                    }
+                    onClick={
+                      compileGenerationContract
+                    }
+                  >
+                    {generationContract
+                      ? "重新生成 Contract"
+                      : "生成 Contract"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      !generationContract ||
+                      generationContract.status ===
+                        "invalid" ||
+                      isGenerating ||
+                      isGeneratingAssets ||
+                      isGeneratingInGodot
+                    }
+                    onClick={
+                      submitGenerationContract
+                    }
+                  >
+                    {submittedContract
+                      ? "已提交"
+                      : "提交 Contract"}
+                  </button>
+                </div>
+              </div>
+
+              {!generationContract && (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    color: "#686868",
+                    fontSize: "12px",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  先生成统一 Contract，系统会把场景元素、空间约束和 Gameplay Graph 编译成同一份生成协议。
+                </div>
+              )}
+
+              {generationContract && (
+                <div
+                  style={{
+                    marginTop: "10px",
+                    display: "grid",
+                    gap: "8px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "10px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <span>
+                      状态：{" "}
+                      <strong>
+                        {
+                          generationContract.status
+                        }
+                      </strong>
+                    </span>
+
+                    <span>
+                      Scene：{" "}
+                      {
+                        generationContract
+                          .scene
+                          .elements
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Exact：{" "}
+                      {
+                        generationContract
+                          .spatial
+                          .exact
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Approximate：{" "}
+                      {
+                        generationContract
+                          .spatial
+                          .approximate
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Free：{" "}
+                      {
+                        generationContract
+                          .spatial
+                          .free
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Nodes：{" "}
+                      {
+                        generationContract
+                          .gameplay
+                          .nodes
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Relations：{" "}
+                      {
+                        generationContract
+                          .gameplay
+                          .relations
+                          .length
+                      }
+                    </span>
+
+                    <span>
+                      Routes：{" "}
+                      {
+                        generationContract
+                          .gameplay
+                          .routes
+                          .length
+                      }
+                    </span>
+                  </div>
+
+                  {generationContract
+                    .issues.length >
+                    0 && (
+                    <div
+                      style={{
+                        padding: "8px",
+                        border:
+                          generationContract.status ===
+                          "invalid"
+                            ? "1px solid #b42318"
+                            : "1px solid #d9aa5d",
+                        background:
+                          generationContract.status ===
+                          "invalid"
+                            ? "#fff4f2"
+                            : "#fffaf0",
+                      }}
+                    >
+                      <strong>
+                        Contract Issues
+                      </strong>
+
+                      {generationContract
+                        .issues
+                        .map(
+                          (issue) => (
+                            <div
+                              key={
+                                issue.id
+                              }
+                              style={{
+                                marginTop:
+                                  "5px",
+                                fontSize:
+                                  "12px",
+                                lineHeight:
+                                  1.45,
+                              }}
+                            >
+                              [
+                              {
+                                issue.severity
+                              }
+                              ]{" "}
+                              {
+                                issue.message
+                              }
+                            </div>
+                          ),
+                        )}
+                    </div>
+                  )}
+
+                  <details>
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      预览完整 Contract
+                    </summary>
+
+                    <pre
+                      style={{
+                        maxHeight: "300px",
+                        overflow: "auto",
+                        padding: "8px",
+                        marginTop: "6px",
+                        background:
+                          "#f4f1ea",
+                        fontSize: "11px",
+                        whiteSpace:
+                          "pre-wrap",
+                      }}
+                    >
+                      {JSON.stringify(
+                        generationContract,
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+
+                  {submittedContract && (
+                    <div
+                      style={{
+                        padding: "8px",
+                        border:
+                          "1px solid #1f7a4f",
+                        background:
+                          "#f1fbf5",
+                        color:
+                          "#1f7a4f",
+                        fontSize: "12px",
+                      }}
+                    >
+                      Contract 已确认：{" "}
+                      {
+                        submittedContract.id
+                      }
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div
@@ -1045,8 +1417,8 @@ export function MapUnderstandingPanel() {
                 gap: "8px",
                 padding: "10px",
                 border:
-                  "1px solid var(--candidate)",
-                background: "color-mix(in srgb, var(--candidate) 9%, var(--panel))",
+                  "1px solid #8b4ab8",
+                background: "#faf6ff",
               }}
             >
               <label
@@ -1078,17 +1450,17 @@ export function MapUnderstandingPanel() {
                   }}
                 />
 
-                Generate Complete Map Background with AI
+                AI 生成整体地图底图
               </label>
 
               <div
                 style={{
-                  color: "var(--muted)",
+                  color: "#686868",
                   fontSize: "12px",
                   lineHeight: 1.45,
                 }}
               >
-                When enabled, the system generates a complete background from the world setting and all map elements, beneath every asset.
+                开启后，系统会根据整体背景设定和所有地图元素生成一张完整底图，并放在所有素材下方。
               </div>
 
               {includeMapBackground && (
@@ -1098,7 +1470,7 @@ export function MapUnderstandingPanel() {
                     gap: "5px",
                   }}
                 >
-                  Additional background requirements (optional)
+                  底图附加要求（可选）
 
                   <textarea
                     value={
@@ -1109,7 +1481,7 @@ export function MapUnderstandingPanel() {
                       isGeneratingAssets ||
                       isGeneratingInGodot
                     }
-                    placeholder="Example: denser forest, an open center, and a soft pixel-art style."
+                    placeholder="例如：森林更茂密，中央留出开阔区域，整体使用柔和的像素艺术风格。"
                     onChange={(event) => {
                       setMapBackgroundPrompt(
                         event.target.value,
@@ -1125,8 +1497,8 @@ export function MapUnderstandingPanel() {
                       resize: "vertical",
                       padding: "7px",
                       border:
-                        "1px solid var(--border)",
-                      background: "var(--elevated)",
+                        "1px solid #c8c5bd",
+                      background: "#ffffff",
                       font: "inherit",
                       lineHeight: 1.45,
                     }}
@@ -1143,9 +1515,9 @@ export function MapUnderstandingPanel() {
             marginBottom: "10px",
             padding: "9px",
             border:
-              "1px solid var(--invalid)",
-            background: "color-mix(in srgb, var(--invalid) 12%, var(--panel))",
-            color: "var(--invalid)",
+              "1px solid #b42318",
+            background: "#fff4f2",
+            color: "#b42318",
           }}
         >
           {generationError}
@@ -1158,9 +1530,9 @@ export function MapUnderstandingPanel() {
             marginBottom: "10px",
             padding: "9px",
             border:
-              "1px solid var(--relief)",
-            background: "color-mix(in srgb, var(--relief) 10%, var(--panel))",
-            color: "var(--relief)",
+              "1px solid #1f7a4f",
+            background: "#ffffff",
+            color: "#1f7a4f",
           }}
         >
           {godotSuccess}
@@ -1173,8 +1545,8 @@ export function MapUnderstandingPanel() {
             marginBottom: "10px",
             padding: "10px",
             border:
-              "1px solid var(--flow)",
-            background: "color-mix(in srgb, var(--flow) 9%, var(--panel))",
+              "1px solid #2869ff",
+            background: "#f3f7ff",
           }}
         >
           <div
@@ -1188,33 +1560,25 @@ export function MapUnderstandingPanel() {
           >
             <div>
               <strong>
-                Godot generation plan ready
+                Godot 生成计划已完成
               </strong>
-
-              {generationPlan.warning && (
-                <div
-                  className="generation-plan-warning"
-                >
-                  {generationPlan.warning}
-                </div>
-              )}
 
               <div
                 style={{
                   marginTop: "4px",
                 }}
               >
-                Matched {" "}
+                已匹配{" "}
                 {
                   generationPlan
                     .placements.length
                 }{" "}
-                existing assets; {" "}
+                个已有素材，待生成{" "}
                 {
                   generationPlan
                     .missingAssets.length
                 }{" "}
-                new assets need generation.
+                个新素材。
               </div>
             </div>
 
@@ -1223,7 +1587,7 @@ export function MapUnderstandingPanel() {
                 downloadGenerationPlan
               }
             >
-              Download Generation Plan
+              下载生成计划
             </button>
           </div>
 
@@ -1237,7 +1601,7 @@ export function MapUnderstandingPanel() {
               }}
             >
               <strong>
-                Existing Asset Matches
+                已有素材匹配
               </strong>
 
               {generationPlan
@@ -1274,10 +1638,10 @@ export function MapUnderstandingPanel() {
                           padding: "8px",
 
                           border:
-                            "1px solid var(--border)",
+                            "1px solid #c8d5f2",
 
                           background:
-                            "var(--elevated)",
+                            "#ffffff",
                         }}
                       >
                         <ExistingAssetThumbnail
@@ -1300,13 +1664,13 @@ export function MapUnderstandingPanel() {
                                   "8px",
 
                                 color:
-                                "var(--relief)",
+                                  "#1f7a4f",
 
                                 fontSize:
                                   "11px",
                               }}
                             >
-                              In Asset Library
+                              素材库已有
                             </span>
                           </div>
 
@@ -1316,7 +1680,7 @@ export function MapUnderstandingPanel() {
                                 "4px",
 
                               color:
-                                "var(--muted)",
+                                "#686868",
 
                               fontSize:
                                 "11px",
@@ -1339,7 +1703,7 @@ export function MapUnderstandingPanel() {
                                 "5px",
 
                               color:
-                              "var(--muted)",
+                                "#4f4f4f",
                             }}
                           >
                             {
@@ -1364,7 +1728,7 @@ export function MapUnderstandingPanel() {
                               )
                             }
                           >
-                            Replace with AI-generated Asset
+                            不满意，改为 AI 生成
                           </button>
                         </div>
                       </div>
@@ -1384,8 +1748,8 @@ export function MapUnderstandingPanel() {
                 marginTop: "12px",
                 padding: "10px",
                 border:
-                  "1px solid var(--warning)",
-                background: "color-mix(in srgb, var(--warning) 10%, var(--panel))",
+                  "1px solid #d97706",
+                background: "#fff8eb",
               }}
             >
               <div
@@ -1399,10 +1763,10 @@ export function MapUnderstandingPanel() {
               >
                 <strong
                   style={{
-                    color: "var(--warning)",
+                    color: "#9a4f00",
                   }}
                 >
-                  New Assets to Generate
+                  需要生成的新素材
                 </strong>
 
                 <button
@@ -1415,8 +1779,8 @@ export function MapUnderstandingPanel() {
                   }
                 >
                   {isGeneratingAssets
-                    ? "Wanxiang is generating..."
-                    : "Generate All Missing Assets"}
+                    ? "万相正在生成..."
+                    : "生成全部缺失素材"}
                 </button>
               </div>
 
@@ -1459,11 +1823,11 @@ export function MapUnderstandingPanel() {
 
                           border:
                             isMapBackground
-                              ? "1px solid var(--candidate)"
-                              : "1px solid var(--warning)",
+                              ? "1px solid #8b4ab8"
+                              : "1px solid #efc27b",
 
                           background:
-                            "var(--elevated)",
+                            "#ffffff",
                         }}
                       >
                         {generatedAsset && (
@@ -1491,10 +1855,10 @@ export function MapUnderstandingPanel() {
                                 "contain",
 
                               border:
-                                "1px solid var(--border)",
+                                "1px solid #ddd",
 
                               background:
-                                "var(--elevated)",
+                                "#f4f1ea",
                             }}
                           />
                         )}
@@ -1509,8 +1873,8 @@ export function MapUnderstandingPanel() {
                             }}
                           >
                             {isMapBackground
-                              ? "Complete Map Background Name"
-                              : "Asset Name"}
+                              ? "整体地图底图名称"
+                              : "素材名称"}
 
                             <input
                               value={
@@ -1545,7 +1909,7 @@ export function MapUnderstandingPanel() {
                                   "5px 7px",
 
                                 border:
-                                  "1px solid var(--border)",
+                                  "1px solid #c8c5bd",
                               }}
                             />
                           </label>
@@ -1557,8 +1921,8 @@ export function MapUnderstandingPanel() {
 
                               color:
                                 isMapBackground
-                                  ? "var(--candidate)"
-                                  : "var(--muted)",
+                                  ? "#8b4ab8"
+                                  : "#686868",
 
                               fontWeight:
                                 isMapBackground
@@ -1569,7 +1933,7 @@ export function MapUnderstandingPanel() {
                             {index + 1}.{" "}
 
                             {isMapBackground
-                                  ? "Complete Map Background"
+                              ? "整体地图底图"
                               : request.category}
                           </div>
 
@@ -1579,7 +1943,7 @@ export function MapUnderstandingPanel() {
                                 "5px",
 
                               color:
-                                "var(--muted)",
+                                "#68513a",
                             }}
                           >
                             {
@@ -1601,10 +1965,10 @@ export function MapUnderstandingPanel() {
                                 "12px",
 
                               color:
-                                "var(--muted)",
+                                "#686868",
                             }}
                           >
-                            Image Generation Prompt
+                            图片生成定义
 
                             <textarea
                               value={
@@ -1645,7 +2009,7 @@ export function MapUnderstandingPanel() {
                                   "6px 7px",
 
                                 border:
-                                  "1px solid var(--border)",
+                                  "1px solid #c8c5bd",
 
                                 font:
                                   "inherit",
@@ -1678,17 +2042,17 @@ export function MapUnderstandingPanel() {
                           >
                             {regeneratingAssetId ===
                             request.id
-                              ? "Regenerating..."
+                              ? "正在重新生成..."
                               : generatedAsset
                                 ? (
                                     isMapBackground
-                                      ? "Regenerate Complete Background"
-                                      : "Regenerate This Asset"
+                                      ? "重新生成整体底图"
+                                      : "重新生成这个素材"
                                   )
                                 : (
                                     isMapBackground
-                                      ? "Generate Complete Map Background"
-                                      : "Generate This Asset"
+                                      ? "生成整体地图底图"
+                                      : "单独生成这个素材"
                                   )}
                           </button>
 
@@ -1699,12 +2063,12 @@ export function MapUnderstandingPanel() {
                                   "7px",
 
                                 color:
-                                  "var(--relief)",
+                                  "#1f7a4f",
                               }}
                             >
                               {isMapBackground
-                                ? "Complete map background generated."
-                                : "Asset image generated. You can edit it and regenerate."}
+                                ? "整体地图底图已经生成。"
+                                : "素材图片已生成，可以继续修改后重新生成。"}
                             </div>
                           )}
                         </div>
@@ -1728,13 +2092,13 @@ export function MapUnderstandingPanel() {
           maxHeight: "420px",
 
           border:
-            "1px solid var(--border)",
+            "1px solid #c8c5bd",
 
           backgroundColor:
-            "var(--elevated)",
+            "#f4f1ea",
 
           backgroundImage:
-            "linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px)",
+            "linear-gradient(#d8d4cb 1px, transparent 1px), linear-gradient(90deg, #d8d4cb 1px, transparent 1px)",
 
           backgroundSize:
             "40px 40px",
@@ -1796,7 +2160,7 @@ export function MapUnderstandingPanel() {
                   minHeight: "40px",
 
                   border:
-                    "2px solid var(--flow)",
+                    "2px solid #2869ff",
 
                   background:
                     "rgba(40, 105, 255, 0.12)",
@@ -1815,10 +2179,10 @@ export function MapUnderstandingPanel() {
                       "2px 5px",
 
                     background:
-                      "var(--elevated)",
+                      "#ffffff",
 
                     border:
-                      "1px solid var(--flow)",
+                      "1px solid #2869ff",
 
                     fontSize:
                       "11px",
@@ -1861,10 +2225,10 @@ export function MapUnderstandingPanel() {
                 padding: "8px",
 
                 border:
-                  "1px solid var(--border)",
+                  "1px solid #c8c5bd",
 
                 background:
-                  "var(--elevated)",
+                  "#ffffff",
               }}
             >
               <img
@@ -1880,7 +2244,7 @@ export function MapUnderstandingPanel() {
                   objectFit:
                     "contain",
                   border:
-                    "1px solid var(--border)",
+                    "1px solid #ddd",
                 }}
               />
 
@@ -1890,7 +2254,7 @@ export function MapUnderstandingPanel() {
                   gap: "4px",
                 }}
               >
-                Element {index + 1}
+                元素 {index + 1}
 
                 <input
                   value={
@@ -1915,7 +2279,7 @@ export function MapUnderstandingPanel() {
                     minHeight: "32px",
                     padding: "5px 7px",
                     border:
-                      "1px solid var(--border)",
+                      "1px solid #c8c5bd",
                   }}
                 />
               </label>
@@ -1926,7 +2290,7 @@ export function MapUnderstandingPanel() {
                   gap: "4px",
                 }}
               >
-                Detailed Interpretation
+                详细理解
 
                 <input
                   value={
@@ -1952,7 +2316,7 @@ export function MapUnderstandingPanel() {
                     minHeight: "32px",
                     padding: "5px 7px",
                     border:
-                      "1px solid var(--border)",
+                      "1px solid #c8c5bd",
                   }}
                 />
               </label>
@@ -1967,7 +2331,7 @@ export function MapUnderstandingPanel() {
                   )
                 }
               >
-                Delete
+                删除
               </button>
             </div>
           ),

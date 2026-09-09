@@ -3,14 +3,12 @@ import { SketchStyleControl } from "../sketch/SketchStyleControl";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent } from "react";
 import { AnnotationComposer, DesignTrace, GameplayLogicPanel, GeneratedContent, LocalNotes, MapUnderstandingReview, MiniMap, SelectedElementContent } from "./SemanticPanels";
 import { WorldSettingPanel } from "../intent-review/WorldSettingPanel";
+import { MapUnderstandingPanel } from "../intent-review/MapUnderstandingPanel";
 import { AssetLibraryPanel } from "../assets/AssetLibraryPanel";
 
 import { AssetSandboxCanvas } from "../sketch/AssetSandboxCanvas";
 import { useWorldloomStore } from "../../store/useWorldloomStore";
 import type { SemanticItemKind } from "../../core/sketch/semanticStyles";
-import { generateInGodot, openGodotScene } from "../../core/bridge/worldloomBridgeClient";
-import type { GodotMapExport } from "../../core/export/godotMapExporter";
-import type { GodotGenerationPlan } from "../../ai/qwenGenerationPlanner";
 
 export type BoardPanel = "assets" | "world" | "map";
 type PanelPosition = { x: number; y: number };
@@ -53,7 +51,7 @@ function FloatingCard({ title, eyebrow, className = "", position, onMove, onClos
   </section>;
 }
 
-export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPanel | null; onOpenPanel: (panel: BoardPanel | null) => void }) {
+export function BoardWorkspace({ boardPanel, onBoardPanelChange }: { boardPanel: BoardPanel | null; onBoardPanelChange: (panel: BoardPanel | null) => void }) {
   const { activeTool, project, clearUnsubmittedSketch, selectSketchIds, setTool, setMapLayerVisible, setGameplayLayerLocked, gameplaySelectionId, selectGameplayElement, generateAssetPlan, setGeneratedOutput } = useWorldloomStore();
   const [positions, setPositions] = useState<Record<BoardPanel | "inspector" | "trace" | "layers" | "plan" | "generate" | "generated", PanelPosition>>({ assets: { x: 0, y: 0 }, world: { x: 0, y: 0 }, map: { x: 0, y: 0 }, inspector: { x: 0, y: 0 }, trace: { x: 0, y: 0 }, layers: { x: 0, y: 0 }, plan: { x: 0, y: 0 }, generate: { x: 0, y: 0 }, generated: { x: 0, y: 0 } });
   const [traceOpen, setTraceOpen] = useState(true);
@@ -66,7 +64,6 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
   const [isPanning, setIsPanning] = useState(false);
   const [semanticPlacement, setSemanticPlacement] = useState<{ point: { x: number; y: number }; targetId?: string } | null>(null);
   const [canvasMenu, setCanvasMenu] = useState<{ point: { x: number; y: number }; screen: { x: number; y: number } } | null>(null);
-  const [godotStatus, setGodotStatus] = useState<string | null>(null);
   const [gameplayEditing, setGameplayEditing] = useState(false);
   const [gameplayTool, setGameplayTool] = useState<GameplayTool>("select");
   const panRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
@@ -83,11 +80,11 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
   useEffect(() => {
     const summonAssets = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.key.toLowerCase() === "a" && target?.tagName !== "INPUT" && target?.tagName !== "TEXTAREA" && target?.isContentEditable !== true) onOpenPanel("assets");
+      if (event.key.toLowerCase() === "a" && target?.tagName !== "INPUT" && target?.tagName !== "TEXTAREA" && target?.isContentEditable !== true) onBoardPanelChange("assets");
     };
     window.addEventListener("keydown", summonAssets);
     return () => window.removeEventListener("keydown", summonAssets);
-  }, [onOpenPanel]);
+  }, [onBoardPanelChange]);
   const movePanel = (panel: keyof typeof positions, position: PanelPosition) => setPositions((current) => ({ ...current, [panel]: position }));
   useEffect(() => { setInspectorOpen(true); }, [project.sketchSelection.ids, gameplaySelectionId]);
   useEffect(() => {
@@ -125,11 +122,11 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
   };
   const goToStage = (stage: WorkflowStage) => {
     setWorkflowStage(stage);
-    if (stage === "generated") { setGeneratedOpen(true); onOpenPanel(null); return; }
+    if (stage === "generated") { setGeneratedOpen(true); onBoardPanelChange(null); return; }
     setGeneratedOpen(false);
-    if (stage === "understand") onOpenPanel("map");
-    if (stage === "plan" || stage === "generate") onOpenPanel(null);
-    if (stage === "edit") onOpenPanel(null);
+    if (stage === "understand") onBoardPanelChange("map");
+    if (stage === "plan" || stage === "generate") onBoardPanelChange(null);
+    if (stage === "edit") onBoardPanelChange(null);
   };
 
   const createManualCard = (kind: SemanticItemKind) => { if (!semanticPlacement) return; const targetId = semanticPlacement.targetId ?? project.sketchState.assetInstances.find((asset) => Math.hypot(asset.position.x - semanticPlacement.point.x, asset.position.y - semanticPlacement.point.y) < 120)?.id ?? project.sketchState.assetInstances[0]?.id; if (targetId) useWorldloomStore.getState().createSemanticItem(kind, targetId, semanticPlacement.point); setSemanticPlacement(null); };
@@ -143,38 +140,6 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
   };
   const createCanvasCard = (kind: SemanticItemKind, text?: string) => { if (!canvasMenu) return; const target = project.sketchState.assetInstances.find((asset) => Math.hypot(asset.position.x - canvasMenu.point.x, asset.position.y - canvasMenu.point.y) < 180) ?? project.sketchState.assetInstances[0]; if (target) useWorldloomStore.getState().createSemanticItem(kind, target.id, canvasMenu.point, text); setCanvasMenu(null); };
   const pasteCanvasNote = () => { void navigator.clipboard?.readText().then((text) => createCanvasCard("constraint", text.trim() || undefined)).catch(() => createCanvasCard("constraint")); };
-  const buildGodotPayload = (): { map: GodotMapExport; plan: GodotGenerationPlan } => {
-    const current = useWorldloomStore.getState().project;
-    const { canvasWidth, canvasHeight } = current.metadata;
-    const map: GodotMapExport = {
-      schemaVersion: "1.1", targetEngine: "godot", generatedAt: new Date().toISOString(),
-      worldSetting: current.worldSetting?.text ?? "", canvas: { width: canvasWidth, height: canvasHeight },
-      mapUnderstandingId: (current.mapUnderstandingSnapshot as { id?: string } | undefined)?.id ?? `MAP-${current.projectId}`,
-      elements: current.sketchState.assetInstances.map((asset) => ({ id: asset.id, name: asset.assetDefinitionId, description: asset.roleAssignments[0] ?? "Unconfirmed map element", source: "custom" as const, position: { x: asset.position.x, y: asset.position.y, normalizedX: asset.position.x / canvasWidth, normalizedY: asset.position.y / canvasHeight }, bounds: null })),
-    };
-    const gameplayElements = (current.gameplaySemanticLayer?.elements ?? []).map((element) => ({ id: element.id, sourceElementId: element.sourceDoodleId, type: element.type === "enemy_stronghold" ? "enemy_base" as const : element.type, name: element.name, description: element.description, position: element.position, size: element.region, routePoints: element.waypoints ?? [], layer: 3 }));
-    const plan: GodotGenerationPlan = { schemaVersion: "1.2", targetEngine: "godot", sourceMapUnderstandingId: map.mapUnderstandingId, placements: [], missingAssets: [], gameplayElements, source: "local_fallback", warning: "Generated from confirmed Worldloom map understanding." };
-    return { map, plan };
-  };
-  const generateGodotScene = async () => {
-    if (!project.mapUnderstandingLocked) return;
-    setGodotStatus("Generating Godot scene…");
-    try {
-      const { map, plan } = buildGodotPayload();
-      const result = await generateInGodot(map, plan);
-      setGeneratedOutput({ status: "success", scenePath: result.scenePath, generatedAssetCount: result.savedAssets.length, generatedAt: Date.now(), message: result.message });
-      setGodotStatus("Godot opened with the generated scene.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Godot generation failed.";
-      setGeneratedOutput({ status: "failed", generatedAt: Date.now(), message });
-      setGodotStatus(message);
-    }
-  };
-  const launchGeneratedScene = async () => {
-    setGodotStatus("Opening Godot…");
-    try { const result = await openGodotScene(); setGodotStatus(result.message); }
-    catch (error) { setGodotStatus(error instanceof Error ? error.message : "Unable to open Godot."); }
-  };
   return <main className="board-workspace"><div ref={viewportRef} className={`board-viewport ${isPanning || spaceDown ? "is-panning" : ""}`} onWheel={handleWheel} onContextMenu={openCanvasMenu} onPointerDownCapture={handlePointerDownCapture} onPointerMoveCapture={handlePointerMoveCapture} onPointerUpCapture={handlePointerUpCapture} onPointerDown={(event) => { if (event.target === event.currentTarget && !isPanning) { selectSketchIds([]); setCanvasMenu(null); } }}>
     <div className="board-camera" style={{ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.zoom})` }}><AssetSandboxCanvas camera={camera} placementMode={Boolean(semanticPlacement)} onSemanticPlacement={(point,targetId)=>setSemanticPlacement({point,targetId})} showEditLayer={editLayerVisible} showGameplayLayer={gameplayLayerVisible} gameplayEditing={gameplayEditing} gameplayTool={gameplayTool} baseMapUrl={project.mapLayers?.baseMapVisible ? project.mapLayers?.baseMapUrl : undefined} readOnly={Boolean(project.mapUnderstandingLocked)} />{editLayerVisible && <LocalNotes />}</div>
     <nav className="top-workflow" aria-label="Workflow stages">{(["edit", "understand", "plan", "generate", "generated"] as WorkflowStage[]).map((stage, index) => <span key={stage}>{index > 0 && <b aria-hidden="true">→</b>}<button className={`${workflowStage === stage ? "active" : ""} ${stage === "edit" ? "workflow-edit-stage" : ""}`} onClick={() => goToStage(stage)}>{stage.toUpperCase()}</button></span>)}</nav>
@@ -184,7 +149,7 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
     {activeTool === "pen" && <SketchStyleControl />}
     {activeTool === "annotation" && <AnnotationComposer />}
     {connectMode && <div className="connect-hint">Shift-select two assets, then connect <button disabled={project.sketchSelection.ids.length !== 2} onClick={() => { useWorldloomStore.getState().addSketchRelation(project.sketchSelection.ids[0], project.sketchSelection.ids[1], "connects"); setConnectMode(false); }}>Connect selection →</button></div>}
-    <div className="panel-recovery"><button onClick={() => onOpenPanel(openPanel === "assets" ? null : "assets")}>Assets</button><button onClick={() => onOpenPanel(openPanel === "world" ? null : "world")}>World Setting</button><button onClick={() => goToStage("understand")}>Map Understanding</button><button onClick={() => setTraceOpen(o=>!o)}>Trace & Mini Map</button>{hasSelection && <button onClick={()=>setInspectorOpen(o=>!o)}>Selected Element</button>}<button onClick={clearUnsubmittedSketch}>Clear current doodle</button></div>
+    <div className="panel-recovery"><button onClick={() => onBoardPanelChange(boardPanel === "assets" ? null : "assets")}>Assets</button><button onClick={() => onBoardPanelChange(boardPanel === "world" ? null : "world")}>World Setting</button><button onClick={() => goToStage("understand")}>Map Understanding</button><button onClick={() => setTraceOpen(o=>!o)}>Trace & Mini Map</button>{hasSelection && <button onClick={()=>setInspectorOpen(o=>!o)}>Selected Element</button>}<button onClick={clearUnsubmittedSketch}>Clear current doodle</button></div>
     <FloatingCard title="Layers" className="floating-layers" position={positions.layers} onMove={position=>movePanel("layers", position)}>
       <div className="layer-control-content" aria-label="Map layers">
         <label><span className="layer-swatch base-map" /><input type="checkbox" checked={project.mapLayers?.baseMapVisible ?? false} onChange={event=>setMapLayerVisible("baseMapVisible",event.target.checked)}/><span>Base Map Editing</span></label>
@@ -194,13 +159,13 @@ export function BoardWorkspace({ openPanel, onOpenPanel }: { openPanel: BoardPan
     </FloatingCard>
     {canvasMenu && <div className="canvas-context-menu" style={{ left: canvasMenu.screen.x, top: canvasMenu.screen.y }} onPointerDown={(event) => event.stopPropagation()}><button onClick={() => createCanvasCard("question")}>Add AI Question</button><button onClick={() => createCanvasCard("reading")}>Add Candidate Note</button><button onClick={() => createCanvasCard("constraint")}>Add Constraint Note</button><button onClick={() => { useWorldloomStore.getState().addSketchMark("symbol"); setCanvasMenu(null); }}>Add Marker</button><button onClick={pasteCanvasNote}>Paste note</button></div>}
     <div className="board-zoom-controls"><button aria-label="Zoom out" onClick={()=>setCamera(c=>({...c,zoom:Math.max(.65,c.zoom-.1)}))}>−</button><span>{Math.round(camera.zoom*100)}%</span><button aria-label="Zoom in" onClick={()=>setCamera(c=>({...c,zoom:Math.min(1.35,c.zoom+.1)}))}>+</button><button onClick={()=>setCamera({x:0,y:0,zoom:1})}>Fit</button></div>
-    {openPanel === "assets" && <FloatingCard title="Assets" className="floating-assets" position={positions.assets} onMove={(position) => movePanel("assets", position)} onClose={() => onOpenPanel(null)}><AssetLibraryPanel /></FloatingCard>}
-    {openPanel === "world" && <FloatingCard title="World Setting" eyebrow="PROJECT" className="floating-world" position={positions.world} onMove={(position) => movePanel("world", position)} onClose={() => onOpenPanel(null)}><WorldSettingPanel /></FloatingCard>}
-    {openPanel === "map" && <FloatingCard title="Map Understanding" eyebrow="SHARED DECISIONS" className="floating-map" position={positions.map} onMove={(position) => movePanel("map", position)} onClose={() => onOpenPanel(null)}><MapUnderstandingReview /></FloatingCard>}
+    {boardPanel === "assets" && <FloatingCard title="Assets" className="floating-assets" position={positions.assets} onMove={(position) => movePanel("assets", position)} onClose={() => onBoardPanelChange(null)}><AssetLibraryPanel /></FloatingCard>}
+    {boardPanel === "world" && <FloatingCard title="World Setting" eyebrow="PROJECT" className="floating-world" position={positions.world} onMove={(position) => movePanel("world", position)} onClose={() => onBoardPanelChange(null)}><WorldSettingPanel /></FloatingCard>}
+    {boardPanel === "map" && <FloatingCard title="Map Understanding" eyebrow="SHARED DECISIONS" className="floating-map" position={positions.map} onMove={(position) => movePanel("map", position)} onClose={() => onBoardPanelChange(null)}><MapUnderstandingReview /></FloatingCard>}
     {hasSelection && inspectorOpen && <FloatingCard title="Selected Element" className="floating-inspector" position={positions.inspector} onMove={(position) => movePanel("inspector", position)} onClose={() => setInspectorOpen(false)}><SelectedElementContent /></FloatingCard>}
     {workflowStage === "plan" && <FloatingCard title="Generation Plan" eyebrow="PLAN" className="floating-plan" position={positions.plan} onMove={position=>movePanel("plan", position)}><div className="plan-content"><p>Review the gameplay structure and prepare the generation plan.</p><GameplayLogicPanel /><button className="primary" disabled={!project.mapUnderstandingLocked} onClick={() => { generateAssetPlan(); goToStage("generate"); }}>Generate Plan</button></div></FloatingCard>}
-    {workflowStage === "generate" && <FloatingCard title="Generate" eyebrow="GLOBAL OUTPUT" className="floating-generate" position={positions.generate} onMove={position=>movePanel("generate", position)}><div className="plan-content"><p>Generate the confirmed map and open the resulting Godot scene.</p>{!project.mapUnderstandingLocked && <p className="generation-status">Confirm Whole Map Understanding in UNDERSTAND before generating.</p>}<button className="primary" disabled={!project.mapUnderstandingLocked} onClick={() => void generateGodotScene()}>Generate & Open Godot</button><button onClick={() => void launchGeneratedScene()}>Open Current Godot Scene</button>{godotStatus && <small className="generation-status">{godotStatus}</small>}</div></FloatingCard>}
-    {generatedOpen && <FloatingCard title="Generated" eyebrow="FINAL OUTPUT" className="floating-generated" position={positions.generated} onMove={position=>movePanel("generated", position)} onClose={()=>setGeneratedOpen(false)}><GeneratedContent onReturnToEdit={()=>goToStage("edit")} onRegenerate={()=>goToStage("generate")} onOpenGodot={() => void launchGeneratedScene()} /></FloatingCard>}
+    {workflowStage === "generate" && <FloatingCard title="Generate" eyebrow="GLOBAL OUTPUT" className="floating-generate" position={positions.generate} onMove={position=>movePanel("generate", position)}><div className="embedded-generation-panel"><p className="generation-intro">Generate from the confirmed map understanding, Gameplay Graph, spatial constraints, validation state, repairs, and Generation Contract.</p><MapUnderstandingPanel /></div></FloatingCard>}
+    {generatedOpen && <FloatingCard title="Generated" eyebrow="FINAL OUTPUT" className="floating-generated" position={positions.generated} onMove={position=>movePanel("generated", position)} onClose={()=>setGeneratedOpen(false)}><GeneratedContent onReturnToEdit={()=>goToStage("edit")} onRegenerate={()=>goToStage("generate")} onOpenGodot={()=>goToStage("generate")} /></FloatingCard>}
     {traceOpen && <FloatingCard title="Design Trace & Mini Map" className="floating-trace" position={positions.trace} onMove={position=>movePanel("trace",position)} onClose={()=>setTraceOpen(false)}><MiniMap camera={camera}/><DesignTrace /></FloatingCard>}
   </div></main>;
 }

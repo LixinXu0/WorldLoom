@@ -76,7 +76,7 @@ export function GeneratedContent({ onReturnToEdit, onRegenerate, onOpenGodot }: 
     {project.mapLayers?.baseMapUrl && <section><h3>Generated Base Map</h3><img className="generated-base-map" src={project.mapLayers.baseMapUrl} alt="Generated base map" /></section>}
     <section><h3>Final Map Composition</h3><div className="generated-summary"><span>Elements <strong>{elements.length}</strong></span><span>Gameplay Semantics <strong>{gameplay.length}</strong></span><span>Assets <strong>{output?.generatedAssetCount ?? elements.length}</strong></span></div><div className="generated-data-preview"><strong>Scene data</strong><pre>{JSON.stringify({ elements: elements.map((asset) => ({ id: asset.id, assetDefinitionId: asset.assetDefinitionId, position: asset.position })), gameplay, scenePath: output?.scenePath ?? "external scene output" }, null, 2)}</pre></div></section>
     <section><h3>Godot Result</h3><p>{output?.message ?? "Generate a scene to publish the final result."}</p>{output?.scenePath && <div className="scene-path"><code>{output.scenePath}</code><button onClick={copyScenePath}>Copy Scene Path</button></div>}</section>
-    <div className="generated-actions"><button className="primary" onClick={onRegenerate}>Regenerate</button><button onClick={onOpenGodot}>Open / Launch Godot</button><button onClick={() => download(project.mapUnderstandingSnapshot ?? { elements }, "worldloom-map-understanding.json")}>Export Map Understanding JSON</button><button onClick={() => download(project.generationContract ?? { generatedOutput: output, elements }, "worldloom-generation-plan.json")}>Download Generation Plan JSON</button><button onClick={onReturnToEdit}>Return to Edit</button></div>
+    <div className="generated-actions"><button className="primary" onClick={onRegenerate}>Regenerate</button><button onClick={onOpenGodot}>Generate / Open in Godot</button><button onClick={() => download(project.mapUnderstandingSnapshot ?? { elements }, "worldloom-map-understanding.json")}>Export Map Understanding JSON</button><button onClick={() => download(project.generationContract ?? { generatedOutput: output, elements }, "worldloom-generation-plan.json")}>Download Contract JSON</button><button onClick={onReturnToEdit}>Return to Edit</button></div>
   </div>;
 }
 
@@ -106,10 +106,256 @@ export function MapUnderstandingReview() {
 }
 
 export function GameplayLogicPanel() {
-  const { project } = useWorldloomStore();
-  const elements = project.gameplaySemanticLayer?.elements ?? [];
-  const count = (type: typeof elements[number]["type"]) => elements.filter((element) => element.type === type).length;
-  return <div className="gameplay-logic-panel"><div className="gameplay-flow"><strong>Gameplay Elements</strong><div className="gameplay-node"><span>Player Spawns</span><small>{count("player_spawn")}</small></div><div className="gameplay-node"><span>Enemy Strongholds</span><small>{count("enemy_stronghold")}</small></div><div className="gameplay-node"><span>NPCs</span><small>{count("npc")}</small></div><div className="gameplay-node"><span>NPC Patrol Routes</span><small>{count("npc_patrol_route")}</small></div>{elements.length === 0 && <p>No gameplay semantic elements have been created.</p>}</div><div className="gameplay-relations"><strong>Semantic metadata</strong>{elements.length === 0 ? <p>Gameplay entities stay separate from image assets.</p> : elements.map((element) => <div key={element.id}><span>{element.name}</span><small>{element.type.replaceAll("_", " ")} · {Math.round(element.position.x)}, {Math.round(element.position.y)} · {element.sourceDoodleId}</small></div>)}</div></div>;
+  const {
+    project,
+    generationContract,
+    validateGameplay,
+    generateGameplayRepairs,
+    applyGameplayRepair,
+    setSpatialConstraintMode,
+  } = useWorldloomStore();
+
+  const sharedState = project.sharedLevelDesignState;
+  const graph = sharedState.gameplay.graph;
+  const validation = sharedState.gameplay.validation ?? null;
+  const repairs = sharedState.gameplay.repairs ?? [];
+  const spatialConstraints = sharedState.spatial.constraints.filter(
+    (constraint) => constraint.enabled,
+  );
+  const contract = generationContract ?? project.generationContract ?? null;
+
+  const nodeCount = (type: string) =>
+    graph.nodes.filter((node) => node.type === type).length;
+
+  const constraintCount = (mode: "exact" | "approximate" | "free") =>
+    spatialConstraints.filter((constraint) => constraint.mode === mode).length;
+
+  const unresolvedRepairs = repairs.filter(
+    (repair) => repair.status === "proposed",
+  );
+
+  return (
+    <div className="gameplay-logic-panel">
+      <section className="gameplay-flow">
+        <strong>Gameplay Graph</strong>
+
+        <div className="gameplay-node">
+          <span>Nodes</span>
+          <small>{graph.nodes.length}</small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Relations</span>
+          <small>{graph.relations.length}</small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Routes</span>
+          <small>{graph.routes.length}</small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Start / Goal</span>
+          <small>
+            {nodeCount("start")} / {nodeCount("goal")}
+          </small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Encounter / Reward</span>
+          <small>
+            {nodeCount("encounter")} / {nodeCount("reward")}
+          </small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Gate / Branch</span>
+          <small>
+            {nodeCount("gate")} / {nodeCount("branch")}
+          </small>
+        </div>
+
+        {graph.nodes.length === 0 && (
+          <p>No Gameplay Graph nodes have been committed yet.</p>
+        )}
+
+        {graph.nodes.slice(0, 8).map((node) => (
+          <div className="gameplay-relation" key={node.id}>
+            <span>{node.label}</span>
+            <small>
+              {node.type.replaceAll("_", " ")} · {node.requirement}
+            </small>
+          </div>
+        ))}
+      </section>
+
+      <section className="gameplay-relations">
+        <strong>Spatial Constraints</strong>
+
+        <div className="gameplay-node">
+          <span>Exact</span>
+          <small>{constraintCount("exact")}</small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Approximate</span>
+          <small>{constraintCount("approximate")}</small>
+        </div>
+
+        <div className="gameplay-node">
+          <span>Free</span>
+          <small>{constraintCount("free")}</small>
+        </div>
+
+        {spatialConstraints.length === 0 && (
+          <p>No explicit spatial constraints yet.</p>
+        )}
+
+        {spatialConstraints.slice(0, 8).map((constraint) => (
+          <div key={constraint.id}>
+            <span>
+              {constraint.property.replaceAll("_", " ")}
+            </span>
+            <small>
+              {constraint.mode}
+              {constraint.mode === "approximate" &&
+              constraint.tolerance !== undefined
+                ? ` · tolerance ${
+                    typeof constraint.tolerance === "number"
+                      ? constraint.tolerance
+                      : "custom"
+                  }`
+                : ""}
+            </small>
+
+            <select
+              value={constraint.mode}
+              onChange={(event) =>
+                setSpatialConstraintMode(
+                  constraint.id,
+                  event.target.value as "exact" | "approximate" | "free",
+                )
+              }
+            >
+              <option value="exact">Exact</option>
+              <option value="approximate">Approximate</option>
+              <option value="free">Free</option>
+            </select>
+          </div>
+        ))}
+      </section>
+
+      <section className="gameplay-relations">
+        <strong>Validation</strong>
+
+        {!validation ? (
+          <p>Gameplay Graph has not been validated yet.</p>
+        ) : validation.valid ? (
+          <div className="confirmed-copy">
+            Gameplay Graph valid · {validation.reachableNodeIds.length} reachable
+            nodes
+          </div>
+        ) : (
+          <>
+            <p>
+              {validation.conflicts.length} gameplay issue
+              {validation.conflicts.length === 1 ? "" : "s"} detected.
+            </p>
+
+            {validation.conflicts.map((conflict) => (
+              <div key={conflict.id}>
+                <span>
+                  {conflict.severity.toUpperCase()} ·{" "}
+                  {conflict.type.replaceAll("_", " ")}
+                </span>
+                <small>{conflict.message}</small>
+              </div>
+            ))}
+          </>
+        )}
+
+        <button type="button" onClick={validateGameplay}>
+          Validate Gameplay Graph
+        </button>
+
+        {validation && !validation.valid && (
+          <button type="button" onClick={generateGameplayRepairs}>
+            Refresh Repair Suggestions
+          </button>
+        )}
+      </section>
+
+      <section className="gameplay-relations">
+        <strong>Repair</strong>
+
+        {unresolvedRepairs.length === 0 ? (
+          <p>
+            {validation?.valid
+              ? "No repair is required."
+              : "No pending repair suggestion."}
+          </p>
+        ) : (
+          unresolvedRepairs.map((repair) => (
+            <div key={repair.id}>
+              <span>{repair.label}</span>
+              <small>{repair.description}</small>
+              <button
+                type="button"
+                className="text-action"
+                onClick={() => applyGameplayRepair(repair.id)}
+              >
+                Apply Repair
+              </button>
+            </div>
+          ))
+        )}
+      </section>
+
+      <section className="gameplay-relations">
+        <strong>Generation Contract</strong>
+
+        {!contract ? (
+          <p>Contract has not been compiled yet.</p>
+        ) : (
+          <>
+            <div className="gameplay-node">
+              <span>Status</span>
+              <small>{contract.status}</small>
+            </div>
+
+            <div className="gameplay-node">
+              <span>Scene elements</span>
+              <small>{contract.scene.elements.length}</small>
+            </div>
+
+            <div className="gameplay-node">
+              <span>Gameplay nodes</span>
+              <small>{contract.gameplay.nodes.length}</small>
+            </div>
+
+            <div className="gameplay-node">
+              <span>Contract issues</span>
+              <small>{contract.issues.length}</small>
+            </div>
+
+            <div className="gameplay-node">
+              <span>Regeneration</span>
+              <small>{contract.regeneration.mode}</small>
+            </div>
+
+            {contract.issues.map((issue) => (
+              <div key={issue.id}>
+                <span>
+                  {issue.severity.toUpperCase()} · {issue.layer}
+                </span>
+                <small>{issue.message}</small>
+              </div>
+            ))}
+          </>
+        )}
+      </section>
+    </div>
+  );
 }
 
 export function LocalNotes() {

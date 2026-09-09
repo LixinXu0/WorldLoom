@@ -11,30 +11,95 @@ import type {
 } from "../../ai/wanAssetGenerator";
 
 
-const BRIDGE_URL =
-  "http://127.0.0.1:4318/generate";
-const OPEN_GODOT_URL =
-  "http://127.0.0.1:4318/open";
+const BRIDGE_BASE_URL =
+  "http://127.0.0.1:4318";
 
 
-export type BridgeGenerationResult = {
-  ok: boolean;
-  message: string;
-  scenePath: string;
-  savedAssets: string[];
+export type WorldloomBridgeGenerateRequest = {
+  map:
+    GodotMapExport;
+
+  plan:
+    GodotGenerationPlan;
+
+  generatedAssets:
+    GeneratedAsset[];
+
+  generationContract:
+    GodotMapExport["generationContract"];
+
+  validation:
+    GodotMapExport["validation"];
+
+  regenerationScope:
+    GodotMapExport["regenerationScope"];
 };
 
 
-export async function generateInGodot(
-  map: GodotMapExport,
-  generationPlan: GodotGenerationPlan,
-  generatedAssets: GeneratedAsset[] = [],
-): Promise<BridgeGenerationResult> {
-  let response: Response;
+export type WorldloomBridgeGenerateResult = {
+  ok: boolean;
 
-  try {
-    response = await fetch(
-      BRIDGE_URL,
+  scenePath: string;
+
+  message?: string;
+
+  mode?:
+    | "full"
+    | "local";
+};
+
+
+function buildGenerateRequest(
+  map:
+    GodotMapExport,
+
+  plan:
+    GodotGenerationPlan,
+
+  generatedAssets:
+    GeneratedAsset[],
+): WorldloomBridgeGenerateRequest {
+  return {
+    map,
+
+    plan,
+
+    generatedAssets,
+
+    generationContract:
+      map.generationContract,
+
+    validation:
+      map.validation,
+
+    regenerationScope:
+      map.regenerationScope,
+  };
+}
+
+
+export async function generateInGodot(
+  map:
+    GodotMapExport,
+
+  plan:
+    GodotGenerationPlan,
+
+  generatedAssets:
+    GeneratedAsset[],
+): Promise<
+  WorldloomBridgeGenerateResult
+> {
+  const request =
+    buildGenerateRequest(
+      map,
+      plan,
+      generatedAssets,
+    );
+
+  const response =
+    await fetch(
+      `${BRIDGE_BASE_URL}/generate`,
       {
         method: "POST",
 
@@ -43,64 +108,34 @@ export async function generateInGodot(
             "application/json",
         },
 
-        body: JSON.stringify({
-          map,
-          generationPlan,
-          generatedAssets,
-        }),
+        body:
+          JSON.stringify(
+            request,
+          ),
       },
     );
 
-  } catch {
-    throw new Error(
-      "Unable to connect to Worldloom Bridge. Make sure the bridge process is running.",
-    );
-  }
+  let result:
+    WorldloomBridgeGenerateResult;
 
-  const data = (
-    await response.json()
-  ) as {
-    ok?: boolean;
-    message?: string;
-    scenePath?: string;
-    savedAssets?: string[];
-    error?: string;
-    details?: string;
-  };
-
-  if (!response.ok) {
-    throw new Error(
-      data.details
-        ? `${data.error ?? "Godot generation failed"}: ${data.details}`
-        : data.error ??
-            "Godot generation failed.",
-    );
-  }
-
-  return {
-    ok: Boolean(data.ok),
-
-    message:
-      data.message ??
-      "Worldloom scene generated.",
-
-    scenePath:
-      data.scenePath ??
-      "res://generated/worldloom_generated_map.tscn",
-
-    savedAssets:
-      data.savedAssets ?? [],
-  };
-}
-
-export async function openGodotScene(): Promise<BridgeGenerationResult> {
-  let response: Response;
   try {
-    response = await fetch(OPEN_GODOT_URL, { method: "POST" });
+    result =
+      await response.json();
   } catch {
-    throw new Error("Unable to connect to Worldloom Bridge. Start the bridge before opening Godot.");
+    throw new Error(
+      "Worldloom Bridge 返回了无法解析的响应。",
+    );
   }
-  const data = await response.json() as Partial<BridgeGenerationResult> & { error?: string; details?: string };
-  if (!response.ok) throw new Error(data.details ? `${data.error ?? "Unable to open Godot"}: ${data.details}` : data.error ?? "Unable to open Godot.");
-  return { ok: Boolean(data.ok), message: data.message ?? "Godot opened.", scenePath: data.scenePath ?? "res://generated/worldloom_generated_map.tscn", savedAssets: data.savedAssets ?? [] };
+
+  if (
+    !response.ok ||
+    !result.ok
+  ) {
+    throw new Error(
+      result.message ??
+        `Worldloom Bridge 请求失败：${response.status}`,
+    );
+  }
+
+  return result;
 }
