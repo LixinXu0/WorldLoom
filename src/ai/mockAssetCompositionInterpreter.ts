@@ -64,6 +64,37 @@ export function interpretAssetComposition(sketch: SketchState, utterance: AssetA
     confidence = 0.8;
   }
 
+  // A selected element always gets one concrete decision to make. This keeps
+  // the interpretation loop inside the Selected Element workspace instead of
+  // leaving a passive question marker on the canvas.
+  const selectedAsset = utterance.assetInstanceIds.length === 1
+    ? sketch.assetInstances.find((asset) => asset.id === utterance.assetInstanceIds[0])
+    : undefined;
+  if (selectedAsset && !clarificationRequests.some((request) => request.targetSketchIds.includes(selectedAsset.id))) {
+    const definition = assetById(selectedAsset.assetDefinitionId);
+    const stairOptions = [
+      { id: "stair-main-route", label: "Main route access", answerValue: "main traversal" },
+      { id: "stair-optional-high-ground", label: "Optional high-ground access", answerValue: "optional high-ground access" },
+      { id: "stair-scenic", label: "Scenic / decorative only", answerValue: "scenic landmark" },
+    ];
+    const generalOptions = [
+      { id: "role-main", label: "Main traversal", answerValue: "main traversal" },
+      { id: "role-optional", label: "Optional access", answerValue: "optional traversal" },
+      { id: "role-landmark", label: "Landmark only", answerValue: "landmark" },
+      { id: "role-combat", label: "Combat advantage", answerValue: "combat advantage" },
+    ];
+    clarificationRequests.push({
+      id: `CLR-${nanoid(5)}`,
+      targetSketchIds: [selectedAsset.id],
+      reason: "semantic_ambiguity",
+      question: selectedAsset.assetDefinitionId === "stone_stair"
+        ? "What role should this Stone Stair play?"
+        : `What should this ${definition?.name ?? "element"} do in the level?`,
+      options: selectedAsset.assetDefinitionId === "stone_stair" ? stairOptions : generalOptions,
+      allowFreeText: true,
+    });
+  }
+
   return {
     id: `ACH-${nanoid(6)}`,
     utteranceId: utterance.id,

@@ -13,6 +13,8 @@ import type {
 
 const BRIDGE_URL =
   "http://127.0.0.1:4318/generate";
+const OPEN_GODOT_URL =
+  "http://127.0.0.1:4318/open";
 
 
 export type BridgeGenerationResult = {
@@ -89,4 +91,16 @@ export async function generateInGodot(
     savedAssets:
       data.savedAssets ?? [],
   };
+}
+
+export async function openGodotScene(): Promise<BridgeGenerationResult> {
+  let response: Response;
+  try {
+    response = await fetch(OPEN_GODOT_URL, { method: "POST" });
+  } catch {
+    throw new Error("Unable to connect to Worldloom Bridge. Start the bridge before opening Godot.");
+  }
+  const data = await response.json() as Partial<BridgeGenerationResult> & { error?: string; details?: string };
+  if (!response.ok) throw new Error(data.details ? `${data.error ?? "Unable to open Godot"}: ${data.details}` : data.error ?? "Unable to open Godot.");
+  return { ok: Boolean(data.ok), message: data.message ?? "Godot opened.", scenePath: data.scenePath ?? "res://generated/worldloom_generated_map.tscn", savedAssets: data.savedAssets ?? [] };
 }

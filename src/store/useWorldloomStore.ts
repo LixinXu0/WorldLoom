@@ -2,7 +2,7 @@ import { createSemanticDemoProject } from "../examples/semanticDemo";
 import type { SketchSemantic } from "../core/sketch/semanticStyles";
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue, PlayableGenerationContract } from "../core/types";
+import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue, PlayableGenerationContract } from "../core/types";
 import type { ClarificationAnswer, InterpretationMode, IntentInterpretationResult, ResearchMode } from "../core/intent/types";
 import type { AssetInstance, SketchMarkKind, SketchObjectType, SketchRelationType } from "../core/sketch/types";
 import type { SemanticItemKind } from "../core/sketch/semanticStyles";
@@ -66,6 +66,18 @@ export type WorldloomState = {
   submitSketch: () => void;
   clearUnsubmittedSketch: () => void;
   setMapLayerVisible: (layer: "baseMapVisible" | "editVisible" | "gameplayVisible", visible: boolean) => void;
+  setGameplayLayerLocked: (locked: boolean) => void;
+  gameplaySelectionId: string | null;
+  selectGameplayElement: (id: string | null) => void;
+  createGameplayElement: (type: GameplaySemanticType, position: GameplaySemanticPoint, sourceDoodleId?: string) => void;
+  updateGameplayElement: (id: string, patch: Partial<Omit<GameplaySemanticElement, "id" | "type">>) => void;
+  moveGameplayElement: (id: string, position: GameplaySemanticPoint) => void;
+  resizeGameplayElement: (id: string, region: GameplaySemanticElement["region"]) => void;
+  deleteGameplayElement: (id: string) => void;
+  addGameplayWaypoint: (id: string, point: GameplaySemanticPoint) => void;
+  moveGameplayWaypoint: (id: string, index: number, point: GameplaySemanticPoint) => void;
+  deleteGameplayWaypoint: (id: string, index: number) => void;
+  reverseGameplayRoute: (id: string) => void;
   setMapBaseMapUrl: (url: string | undefined) => void;
   setGeneratedOutput: (output: NonNullable<WorldloomProject["generatedOutput"]>) => void;
   confirmMapUnderstanding: () => void;
@@ -237,6 +249,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   modelStatus: "idle",
   modelError: null,
   modelSource: "demo",
+  gameplaySelectionId: null,
   generationContract: initialProject.generationContract ?? null,
   validationIssues: initialProject.validationIssues ?? [],
   setSemanticDimension: (key, value) => {
@@ -360,16 +373,79 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
       baseMapVisible: current?.baseMapVisible ?? false,
       editVisible: current?.editVisible ?? current?.sketchVisible ?? true,
       gameplayVisible: current?.gameplayVisible ?? true,
+      gameplayLocked: current?.gameplayLocked ?? false,
       baseMapUrl: current?.baseMapUrl,
       baseMapStatus: current?.baseMapStatus ?? "not_generated",
       [layer]: visible,
     };
     set({ project: { ...state.project, mapLayers } });
   },
+  setGameplayLayerLocked: (locked) => {
+    const state = get();
+    const current = state.project.mapLayers;
+    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: locked, baseMapUrl: current?.baseMapUrl, baseMapStatus: current?.baseMapStatus ?? "not_generated" }, gameplaySemanticLayer: { elements: state.project.gameplaySemanticLayer?.elements ?? [], locked } } });
+  },
+  selectGameplayElement: (id) => {
+    set({ gameplaySelectionId: id, selected: id ? { kind: "gameplay", id } : null });
+    if (id) get().selectSketchIds([]);
+  },
+  createGameplayElement: (type, position, sourceDoodleId = "manual") => {
+    const state = get();
+    if (state.project.mapLayers?.gameplayLocked || state.project.gameplaySemanticLayer?.locked) return;
+    const labels: Record<GameplaySemanticType, { name: string; description: string }> = {
+      player_spawn: { name: "Main Spawn", description: "Primary player starting location." },
+      enemy_stronghold: { name: "Enemy Stronghold", description: "A hostile gameplay zone." },
+      npc: { name: "NPC", description: "A gameplay character." },
+      npc_patrol_route: { name: "Guard Patrol", description: "NPC patrol route." },
+    };
+    const point = { x: Math.max(0, Math.min(state.project.metadata.canvasWidth, position.x)), y: Math.max(0, Math.min(state.project.metadata.canvasHeight, position.y)) };
+    const id = `gameplay_${nanoid(8)}`;
+    const base = labels[type];
+    const element: GameplaySemanticElement = { id, type, name: base.name, description: base.description, sourceDoodleId, position: point, region: type === "enemy_stronghold" ? { width: 150, height: 105 } : { width: 56, height: 42 } };
+    if (type === "npc_patrol_route") {
+      const endPoint = { x: Math.min(state.project.metadata.canvasWidth, point.x + 180), y: Math.max(0, point.y - 45) };
+      element.startPoint = point; element.endPoint = endPoint; element.direction = "forward"; element.waypoints = [point, { x: (point.x + endPoint.x) / 2, y: (point.y + endPoint.y) / 2 }, endPoint];
+    }
+    set({ project: { ...state.project, gameplaySemanticLayer: { elements: [...(state.project.gameplaySemanticLayer?.elements ?? []), element], locked: false } }, gameplaySelectionId: id, selected: { kind: "gameplay", id } });
+  },
+  updateGameplayElement: (id, patch) => {
+    const state = get(); if (state.project.mapLayers?.gameplayLocked || state.project.gameplaySemanticLayer?.locked) return;
+    const layer = state.project.gameplaySemanticLayer ?? { elements: [], locked: false };
+    set({ project: { ...state.project, gameplaySemanticLayer: { ...layer, elements: layer.elements.map((item) => item.id === id ? { ...item, ...patch } : item) } } });
+  },
+  moveGameplayElement: (id, position) => get().updateGameplayElement(id, { position }),
+  resizeGameplayElement: (id, region) => get().updateGameplayElement(id, { region: { width: Math.max(24, region.width), height: Math.max(24, region.height) } }),
+  deleteGameplayElement: (id) => {
+    const state = get(); if (state.project.mapLayers?.gameplayLocked || state.project.gameplaySemanticLayer?.locked) return;
+    const layer = state.project.gameplaySemanticLayer ?? { elements: [], locked: false };
+    set({ project: { ...state.project, gameplaySemanticLayer: { ...layer, elements: layer.elements.filter((item) => item.id !== id) } }, gameplaySelectionId: state.gameplaySelectionId === id ? null : state.gameplaySelectionId, selected: state.gameplaySelectionId === id ? null : state.selected });
+  },
+  addGameplayWaypoint: (id, point) => {
+    const item = get().project.gameplaySemanticLayer?.elements.find((element) => element.id === id);
+    if (!item || item.type !== "npc_patrol_route") return;
+    get().updateGameplayElement(id, { waypoints: [...(item.waypoints ?? []), point] });
+  },
+  moveGameplayWaypoint: (id, index, point) => {
+    const item = get().project.gameplaySemanticLayer?.elements.find((element) => element.id === id);
+    if (!item || item.type !== "npc_patrol_route") return;
+    const waypoints = [...(item.waypoints ?? [])]; waypoints[index] = point;
+    get().updateGameplayElement(id, { waypoints, startPoint: index === 0 ? point : item.startPoint, endPoint: index === waypoints.length - 1 ? point : item.endPoint, position: index === 0 ? point : item.position });
+  },
+  deleteGameplayWaypoint: (id, index) => {
+    const item = get().project.gameplaySemanticLayer?.elements.find((element) => element.id === id);
+    if (!item || item.type !== "npc_patrol_route" || (item.waypoints?.length ?? 0) <= 2) return;
+    get().updateGameplayElement(id, { waypoints: item.waypoints?.filter((_, waypointIndex) => waypointIndex !== index) });
+  },
+  reverseGameplayRoute: (id) => {
+    const item = get().project.gameplaySemanticLayer?.elements.find((element) => element.id === id);
+    if (!item || item.type !== "npc_patrol_route") return;
+    const waypoints = [...(item.waypoints ?? [])].reverse();
+    get().updateGameplayElement(id, { waypoints, startPoint: item.endPoint, endPoint: item.startPoint, position: item.endPoint ?? item.position, direction: item.direction === "reverse" ? "forward" : "reverse" });
+  },
   setMapBaseMapUrl: (url) => {
     const state = get();
     const current = state.project.mapLayers;
-    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, baseMapUrl: url, baseMapStatus: url ? "generated" : "not_generated" } } });
+    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: current?.gameplayLocked ?? false, baseMapUrl: url, baseMapStatus: url ? "generated" : "not_generated" } } });
   },
   setGeneratedOutput: (output) => {
     const state = get();
@@ -696,7 +772,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     }).catch((error: unknown) => {
       const current = get();
       if (current.project.compositionHypothesis?.utteranceId !== utterance.id) return;
-      set({ project: { ...current.project, sketchSubmission: current.project.sketchSubmission ? { ...current.project.sketchSubmission, status: "failed" as const, error: error instanceof Error ? error.message : "Model request failed" } : current.project.sketchSubmission }, modelStatus: "error", modelError: error instanceof Error ? error.message : "Model request failed", modelSource: "local-fallback" });
+      set({ project: { ...current.project, sketchSubmission: current.project.sketchSubmission ? { ...current.project.sketchSubmission, status: "candidate" as const, error: error instanceof Error ? error.message : "Model request failed" } : current.project.sketchSubmission }, modelStatus: "ready", modelError: error instanceof Error ? error.message : "Model request failed", modelSource: "local-fallback" });
     });
   },
   answerCompositionClarification: (requestId, optionId, freeText) => {
@@ -704,17 +780,24 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const hypothesis = state.project.compositionHypothesis;
     if (!hypothesis) return;
     const answer: ClarificationAnswer = { requestId, optionId, freeText, answeredAt: Date.now() };
+    const request = hypothesis.clarificationRequests.find((item) => item.id === requestId);
+    const selectedOption = request?.options?.find((option) => option.id === optionId);
+    const answerValue = freeText?.trim() || selectedOption?.answerValue || selectedOption?.label;
+    const answeredTargets = new Set(request?.targetSketchIds ?? []);
     const next = {
       ...hypothesis,
       clarificationAnswers: [...hypothesis.clarificationAnswers, answer],
       assetRoles: hypothesis.assetRoles.map((role) => {
         const asset = state.project.sketchState.assetInstances.find((item) => item.id === role.assetInstanceId);
-        return asset?.assetDefinitionId === "reward_chest" && optionId === "chest-separate-reward" ? { ...role, proposedRole: "optional reward", confidence: 0.9 } : role;
+        if (asset?.assetDefinitionId === "reward_chest" && optionId === "chest-separate-reward") return { ...role, proposedRole: "optional reward", confidence: 0.9 };
+        return answeredTargets.has(role.assetInstanceId) && answerValue ? { ...role, proposedRole: answerValue, confidence: 0.92 } : role;
       }),
+      alternatives: answerValue ? [{ id: `answer-${requestId}`, name: answerValue, semanticType: "gameplay", description: `User-selected role for this element: ${answerValue}.`, confidence: 0.92, summary: `${answerValue}: user-confirmed interpretation`, rationale: "User response" }, ...hypothesis.alternatives.filter((item) => item.id !== `answer-${requestId}`)] : hypothesis.alternatives,
       status: "candidate" as const,
     };
-    set({ project: { ...state.project, compositionHypothesis: next } });
+    set({ project: { ...state.project, compositionHypothesis: next, sketchState: { ...state.project.sketchState, semanticItems: (state.project.sketchState.semanticItems ?? []).map((item) => item.id === requestId ? { ...item, status: "committed" as const } : item) } } });
     logEvent("clarification_answered", { requestId, optionId, freeText });
+    logEvent("interpretation_adjusted", { source: "clarification_response", requestId, answerValue });
   },
   selectCompositionCandidate: (candidateId) => {
     const state = get();
@@ -750,7 +833,12 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const hypothesis = state.project.compositionHypothesis;
     if (!hypothesis) return;
     const committedCompositionIntent = commitCompositionIntent(hypothesis, state.project.sketchState);
-    const sketchState = { ...state.project.sketchState, utterances: state.project.sketchState.utterances.map((utterance) => utterance.id === hypothesis.utteranceId ? { ...utterance, status: "committed" as const } : utterance) };
+    const assignedRoles = new Map(hypothesis.assetRoles.map((role) => [role.assetInstanceId, role.proposedRole]));
+    const sketchState = {
+      ...state.project.sketchState,
+      utterances: state.project.sketchState.utterances.map((utterance) => utterance.id === hypothesis.utteranceId ? { ...utterance, status: "committed" as const } : utterance),
+      assetInstances: state.project.sketchState.assetInstances.map((asset) => assignedRoles.has(asset.id) ? { ...asset, roleAssignments: Array.from(new Set([...asset.roleAssignments, assignedRoles.get(asset.id)!])) } : asset),
+    };
     const compositionHypothesis = { ...hypothesis, status: "committed" as const };
     set({ project: { ...state.project, sketchState, compositionHypothesis, committedCompositionIntent, wholeLevelState: "editing", sketchSubmission: state.project.sketchSubmission ? { ...state.project.sketchSubmission, status: "committed" as const } : state.project.sketchSubmission, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, wholeLevelState: "editing", undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("composition_committed", { hypothesisId: hypothesis.id, compositionIntentId: committedCompositionIntent.id });

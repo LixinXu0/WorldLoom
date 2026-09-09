@@ -269,6 +269,26 @@ export type TimelinePoint = {
   role?: RoomRole;
   feedbackCategories?: ExperienceFeedback["category"][];
 };
+export type GameplaySemanticType = "player_spawn" | "enemy_stronghold" | "npc" | "npc_patrol_route";
+export type GameplaySemanticPoint = { x: number; y: number };
+export type GameplaySemanticElement = {
+  id: string;
+  type: GameplaySemanticType;
+  name: string;
+  description: string;
+  /** The raw doodle or manual action from which this semantic was created. */
+  sourceDoodleId: string;
+  position: GameplaySemanticPoint;
+  region: { width: number; height: number };
+  startPoint?: GameplaySemanticPoint;
+  endPoint?: GameplaySemanticPoint;
+  direction?: "forward" | "reverse";
+  waypoints?: GameplaySemanticPoint[];
+};
+export type GameplaySemanticLayer = {
+  elements: GameplaySemanticElement[];
+  locked: boolean;
+};
 export type WorldloomProject = {
   version: string;
   name: string;
@@ -331,9 +351,11 @@ export type WorldloomProject = {
     sketchVisible?: boolean;
     /** Gameplay logic: semantic cards, markers, and relationships. */
     gameplayVisible: boolean;
+    gameplayLocked?: boolean;
     baseMapUrl?: string;
     baseMapStatus?: "not_generated" | "generating" | "generated" | "failed";
   };
+  gameplaySemanticLayer?: GameplaySemanticLayer;
 };
 export type WholeLevelState = "editing" | "finalizing" | "needs_validation" | "ready_to_generate" | "generating" | "generated";
 export type StructuralIssue = { id: string; severity: "warning" | "error"; message: string; sourceIds?: string[] };
@@ -345,6 +367,7 @@ export type Tool = "select" | "move" | "pen" | "path" | "loop" | "arrow" | "conn
 export type SelectedEntity =
   | { kind: "stroke"; id: string }
   | { kind: "asset"; id: string }
+  | { kind: "gameplay"; id: string }
   | { kind: "constraint"; id: string }
   | { kind: "room"; variantId: string; id: string }
   | null;

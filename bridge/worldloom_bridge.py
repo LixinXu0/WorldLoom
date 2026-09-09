@@ -1,9 +1,12 @@
+import ctypes
 import hashlib
 import json
 import mimetypes
 import os
 import re
 import subprocess
+import threading
+import time
 import urllib.request
 
 from copy import deepcopy
@@ -20,8 +23,9 @@ from PIL import Image, ImageDraw
 HOST = "127.0.0.1"
 PORT = 4318
 
-GODOT_PROJECT_PATH = Path(
-    r"C:\2\CHI\test1\worldloom-godot-test"
+GODOT_PROJECT_PATH = (
+    Path(__file__).resolve().parent
+    / "godot-project"
 )
 
 # Keep the requested install path first, with a fallback for the unpacked
@@ -198,6 +202,23 @@ class WorldloomBridgeHandler(
 
 
     def do_POST(self) -> None:
+        if self.path == "/open":
+            try:
+                validate_local_paths()
+                open_generated_scene()
+                self.send_json(200, {
+                    "ok": True,
+                    "message": "Godot opened.",
+                    "scenePath": "res://generated/worldloom_generated_map.tscn",
+                    "savedAssets": [],
+                })
+            except Exception as error:
+                self.send_json(500, {
+                    "error": "Unable to open Godot.",
+                    "details": str(error),
+                })
+            return
+
         if self.path != "/generate":
             self.send_json(
                 404,
@@ -1489,6 +1510,7 @@ def run_godot_command(
         command,
         capture_output=True,
         text=True,
+        errors="replace",
         timeout=timeout,
         check=False,
     )
@@ -1540,6 +1562,10 @@ def run_generation() -> None:
         timeout=60,
     )
 
+    open_generated_scene()
+
+
+def open_generated_scene() -> None:
     subprocess.Popen(
         [
             str(GODOT_EXECUTABLE),
@@ -1552,6 +1578,42 @@ def run_generation() -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+    # Godot can launch behind the browser or a previous editor window.  Bring
+    # the generated scene forward after the editor has had a moment to create
+    # its native window, so the Generate action has visible feedback.
+    threading.Thread(
+        target=focus_generated_scene_window,
+        daemon=True,
+    ).start()
+
+
+def focus_generated_scene_window() -> None:
+    if os.name != "nt":
+        return
+
+    window_title = (
+        "worldloom_generated_map.tscn - "
+        "Worldloom Generated Map - Godot Engine"
+    )
+    user32 = ctypes.windll.user32
+    deadline = time.monotonic() + 10
+
+    while time.monotonic() < deadline:
+        window_handle = user32.FindWindowW(
+            None,
+            window_title,
+        )
+        if window_handle:
+            user32.ShowWindow(
+                window_handle,
+                9,
+            )
+            user32.SetForegroundWindow(
+                window_handle,
+            )
+            return
+        time.sleep(0.25)
 
 
 def main() -> None:

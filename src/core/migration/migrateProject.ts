@@ -74,8 +74,10 @@ function withV2Defaults(project: Partial<WorldloomProject>): WorldloomProject {
       ? {
           ...project.mapLayers,
           editVisible: project.mapLayers.editVisible ?? project.mapLayers.sketchVisible ?? true,
+          gameplayLocked: project.mapLayers.gameplayLocked ?? false,
         }
-      : { baseMapVisible: false, editVisible: true, gameplayVisible: true, baseMapStatus: "not_generated" },
+      : { baseMapVisible: false, editVisible: true, gameplayVisible: true, gameplayLocked: false, baseMapStatus: "not_generated" },
+    gameplaySemanticLayer: project.gameplaySemanticLayer ?? { elements: [], locked: false },
   };
 }
 
