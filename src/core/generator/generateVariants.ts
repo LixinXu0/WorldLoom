@@ -370,7 +370,7 @@ export function generateVariants(
       )
     ) {
       validation.warnings.push(
-        "No Gameplay path or Flow stroke supplied; generated from the default entrance-to-exit path.",
+        "No Flow stroke or Gameplay path supplied; generated from the default entrance-to-exit path.",
       );
     }
 

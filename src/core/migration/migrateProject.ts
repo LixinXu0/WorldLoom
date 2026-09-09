@@ -129,8 +129,21 @@ function normalizeGameplayGraph(
       | Partial<GameplayGraph>
       | undefined;
 
+  const graphHasContent = (
+    graph: Partial<GameplayGraph> | undefined,
+  ) => Boolean(
+    graph &&
+    (
+      (Array.isArray(graph.nodes) && graph.nodes.length > 0) ||
+      (Array.isArray(graph.relations) && graph.relations.length > 0) ||
+      (Array.isArray(graph.routes) && graph.routes.length > 0)
+    ),
+  );
+
   return normalizeGraphValue(
-    sharedGraph ?? legacyGraph,
+    graphHasContent(sharedGraph) || !graphHasContent(legacyGraph)
+      ? sharedGraph ?? legacyGraph
+      : legacyGraph,
   );
 }
 
@@ -657,7 +670,10 @@ function normalizeSharedLevelDesignState(
       ? existingSpatial
           .constraints
           .map(
-            normalizeSpatialConstraint,
+            (constraint) =>
+              project.version === currentProjectVersion
+                ? { ...constraint }
+                : normalizeSpatialConstraint(constraint),
           )
       : deriveSpatialConstraints(
           sketch,

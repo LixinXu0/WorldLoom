@@ -509,16 +509,23 @@ export function MapUnderstandingPanel() {
       setGeneratedAssets([]);
 
       try {
+        const contract =
+          submittedContract ??
+          generationContract ??
+          compileGenerationContract();
+
         const mapExport =
           buildGodotMapExport(
             finalMapUnderstanding,
             canvasWidth,
             canvasHeight,
+            { generationContract: contract },
           );
 
         const qwenPlan =
           await createQwenGenerationPlan(
             mapExport,
+            contract,
           );
 
         const plan =
@@ -814,11 +821,17 @@ export function MapUnderstandingPanel() {
       setGodotSuccess("");
 
       try {
+        const contract =
+          submittedContract ??
+          generationContract ??
+          compileGenerationContract();
+
         const mapExport =
           buildGodotMapExport(
             finalMapUnderstanding,
             canvasWidth,
             canvasHeight,
+            { generationContract: contract },
           );
 
         let plan = generationPlan;
@@ -827,6 +840,7 @@ export function MapUnderstandingPanel() {
           const qwenPlan =
             await createQwenGenerationPlan(
               mapExport,
+              contract,
             );
 
           plan =

@@ -1,0 +1,221 @@
+{
+  "schemaVersion": "1.0",
+  "libraryId": "worldloom-default-2d",
+  "name": "Worldloom Default 2D Assets",
+  "assets": [
+    {
+      "id": "generic_area",
+      "name": "Generic Area",
+      "category": "area",
+      "tags": [
+        "area",
+        "region",
+        "zone",
+        "地形",
+        "区域"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "filled_area"
+      },
+      "visual": {
+        "color": "#d7d2c8",
+        "defaultWidth": 180,
+        "defaultHeight": 120
+      },
+      "placement": {
+        "mode": "stretch_to_bounds",
+        "layer": 0
+      },
+      "physics": {
+        "collision": false
+      }
+    },
+    {
+      "id": "grass_ground",
+      "name": "Grass Ground",
+      "category": "terrain",
+      "tags": [
+        "grass",
+        "ground",
+        "field",
+        "草地",
+        "地面"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "filled_area"
+      },
+      "visual": {
+        "color": "#8fbd72",
+        "defaultWidth": 240,
+        "defaultHeight": 180
+      },
+      "placement": {
+        "mode": "stretch_to_bounds",
+        "layer": 0
+      },
+      "physics": {
+        "collision": false
+      }
+    },
+    {
+      "id": "lake_area",
+      "name": "Lake",
+      "category": "terrain",
+      "tags": [
+        "lake",
+        "water",
+        "pond",
+        "湖泊",
+        "水域",
+        "池塘"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "ellipse_area"
+      },
+      "visual": {
+        "color": "#5da9d6",
+        "defaultWidth": 200,
+        "defaultHeight": 140
+      },
+      "placement": {
+        "mode": "stretch_to_bounds",
+        "layer": 0
+      },
+      "physics": {
+        "collision": true,
+        "bodyType": "static"
+      }
+    },
+    {
+      "id": "cave_entrance",
+      "name": "Cave Entrance",
+      "category": "landmark",
+      "tags": [
+        "cave",
+        "entrance",
+        "hole",
+        "洞穴",
+        "入口",
+        "山洞"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "ellipse_area"
+      },
+      "visual": {
+        "color": "#4b4642",
+        "defaultWidth": 100,
+        "defaultHeight": 75
+      },
+      "placement": {
+        "mode": "center_in_bounds",
+        "layer": 2
+      },
+      "physics": {
+        "collision": true,
+        "bodyType": "static"
+      }
+    },
+    {
+      "id": "stone_path",
+      "name": "Stone Path",
+      "category": "path",
+      "tags": [
+        "path",
+        "road",
+        "route",
+        "stone",
+        "道路",
+        "小路",
+        "路线"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "path_strip"
+      },
+      "visual": {
+        "color": "#9d9588",
+        "defaultWidth": 260,
+        "defaultHeight": 36
+      },
+      "placement": {
+        "mode": "follow_bounds",
+        "layer": 1
+      },
+      "physics": {
+        "collision": false
+      }
+    },
+    {
+      "id": "rail_track",
+      "name": "Rail Track",
+      "category": "path",
+      "tags": [
+        "rail",
+        "railway",
+        "track",
+        "line",
+        "铁路",
+        "轨道",
+        "线路"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "rail_strip"
+      },
+      "visual": {
+        "color": "#5d5d5d",
+        "defaultWidth": 280,
+        "defaultHeight": 30
+      },
+      "placement": {
+        "mode": "follow_bounds",
+        "layer": 1
+      },
+      "physics": {
+        "collision": false
+      }
+    },
+    {
+      "id": "stone_wall",
+      "name": "Stone Wall",
+      "category": "obstacle",
+      "tags": [
+        "wall",
+        "barrier",
+        "boundary",
+        "stone",
+        "墙",
+        "围墙",
+        "障碍"
+      ],
+      "origin": "built_in",
+      "resource": {
+        "type": "procedural",
+        "generator": "wall_strip"
+      },
+      "visual": {
+        "color": "#6f6961",
+        "defaultWidth": 240,
+        "defaultHeight": 28
+      },
+      "placement": {
+        "mode": "follow_bounds",
+        "layer": 2
+      },
+      "physics": {
+        "collision": true,
+        "bodyType": "static"
+      }
+    }
+  ]
+}

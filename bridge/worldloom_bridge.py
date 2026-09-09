@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import urllib.request
 
@@ -20,15 +21,37 @@ from PIL import Image, ImageDraw
 HOST = "127.0.0.1"
 PORT = 4318
 
-GODOT_PROJECT_PATH = Path(
-    r"C:\2\CHI\test1\worldloom-godot-test"
-)
+BRIDGE_DIRECTORY = Path(__file__).resolve().parent
 
-GODOT_EXECUTABLE = Path(
-    r"C:\2\CHI\godot"
-    r"\Godot_v4.7.1-stable_win64.exe"
-    r"\Godot_v4.7.1-stable_win64.exe"
-)
+GODOT_PROJECT_PATH = Path(
+    os.environ.get(
+        "WORLDLOOM_GODOT_PROJECT_PATH",
+        BRIDGE_DIRECTORY / "godot-project",
+    )
+).expanduser().resolve()
+
+
+def find_godot_executable() -> Path | None:
+    configured = os.environ.get(
+        "WORLDLOOM_GODOT_EXECUTABLE"
+    )
+
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    discovered = (
+        shutil.which("godot4")
+        or shutil.which("godot")
+    )
+
+    return (
+        Path(discovered).resolve()
+        if discovered
+        else None
+    )
+
+
+GODOT_EXECUTABLE = find_godot_executable()
 
 MAP_OUTPUT_PATH = (
     GODOT_PROJECT_PATH
@@ -57,6 +80,13 @@ REGENERATION_SCOPE_OUTPUT_PATH = (
 
 MANIFEST_PATH = (
     GODOT_PROJECT_PATH
+    / "worldloom_assets"
+    / "asset_manifest.json"
+)
+
+WEB_MANIFEST_PATH = (
+    BRIDGE_DIRECTORY.parent
+    / "public"
     / "worldloom_assets"
     / "asset_manifest.json"
 )
@@ -155,7 +185,9 @@ class WorldloomBridgeHandler(
     def do_GET(self) -> None:
         try:
             if self.path == "/asset-manifest":
-                validate_local_paths()
+                validate_local_paths(
+                    require_executable=False
+                )
 
                 self.send_json(
                     200,
@@ -618,15 +650,29 @@ def normalize_regeneration_scope(
     }
 
 
-def validate_local_paths() -> None:
+def validate_local_paths(
+    require_executable: bool = True,
+) -> None:
     if not GODOT_PROJECT_PATH.exists():
         raise FileNotFoundError(
             "Godot project path does not exist."
         )
 
-    if not GODOT_EXECUTABLE.exists():
+    if not (
+        GODOT_PROJECT_PATH / "project.godot"
+    ).is_file():
         raise FileNotFoundError(
-            "Godot executable path is incorrect."
+            "Godot project.godot file does not exist."
+        )
+
+    if require_executable and (
+        GODOT_EXECUTABLE is None
+        or not GODOT_EXECUTABLE.is_file()
+    ):
+        raise FileNotFoundError(
+            "Godot executable was not found. Set "
+            "WORLDLOOM_GODOT_EXECUTABLE or add Godot "
+            "to PATH."
         )
 
     if not MANIFEST_PATH.exists():
@@ -896,6 +942,32 @@ def scan_godot_textures() -> dict:
         raise ValueError(
             "Asset manifest assets field is invalid."
         )
+
+    if not assets and WEB_MANIFEST_PATH.is_file():
+        web_manifest = read_json(
+            WEB_MANIFEST_PATH
+        )
+        web_assets = web_manifest.get(
+            "assets",
+            [],
+        )
+
+        if isinstance(web_assets, list):
+            assets = deepcopy(web_assets)
+            manifest.update({
+                "schemaVersion": web_manifest.get(
+                    "schemaVersion",
+                    manifest.get("schemaVersion", "1.0"),
+                ),
+                "libraryId": web_manifest.get(
+                    "libraryId",
+                    manifest.get("libraryId", "worldloom-local"),
+                ),
+                "name": web_manifest.get(
+                    "name",
+                    manifest.get("name", "Worldloom Local Assets"),
+                ),
+            })
 
     retained_assets = [
         asset
@@ -1717,6 +1789,7 @@ def run_godot_command(
         command,
         capture_output=True,
         text=True,
+        errors="backslashreplace",
         timeout=timeout,
         check=False,
     )

@@ -131,7 +131,7 @@ describe("Worldloom v2 editing loop", () => {
     const result = migrateProject(oldProject);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.project.version).toBe("4.0.0");
+      expect(result.project.version).toBe("5.0.0");
       expect(result.project.manualOverrides).toEqual([]);
     }
   });

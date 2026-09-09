@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "1.1",
+  "targetEngine": "godot",
+  "generatedAt": "2026-09-09T09:06:05.072Z",
+  "worldSetting": "",
+  "canvas": {
+	"width": 960,
+	"height": 560
+  },
+  "mapUnderstandingId": "MAP-ZTTgjm9",
+  "elements": [
+	{
+	  "id": "demo-watchtower",
+	  "name": "watchtower",
+	  "description": "optional traversal",
+	  "source": "custom",
+	  "position": {
+		"x": 320,
+		"y": 160,
+		"normalizedX": 0.3333333333333333,
+		"normalizedY": 0.2857142857142857
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-barricade",
+	  "name": "barricade",
+	  "description": "defensive cover",
+	  "source": "custom",
+	  "position": {
+		"x": 400,
+		"y": 250,
+		"normalizedX": 0.4166666666666667,
+		"normalizedY": 0.44642857142857145
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-enemy_shrine",
+	  "name": "enemy_shrine",
+	  "description": "encounter source",
+	  "source": "custom",
+	  "position": {
+		"x": 490,
+		"y": 300,
+		"normalizedX": 0.5104166666666666,
+		"normalizedY": 0.5357142857142857
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-stone_stair",
+	  "name": "stone_stair",
+	  "description": "approach connector",
+	  "source": "custom",
+	  "position": {
+		"x": 250,
+		"y": 275,
+		"normalizedX": 0.2604166666666667,
+		"normalizedY": 0.49107142857142855
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-reward_chest",
+	  "name": "reward_chest",
+	  "description": "optional reward",
+	  "source": "custom",
+	  "position": {
+		"x": 330,
+		"y": 310,
+		"normalizedX": 0.34375,
+		"normalizedY": 0.5535714285714286
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-bridge",
+	  "name": "bridge",
+	  "description": "traversal connector",
+	  "source": "custom",
+	  "position": {
+		"x": 515,
+		"y": 310,
+		"normalizedX": 0.5364583333333334,
+		"normalizedY": 0.5535714285714286
+	  },
+	  "bounds": null
+	},
+	{
+	  "id": "demo-gate",
+	  "name": "gate",
+	  "description": "gating",
+	  "source": "custom",
+	  "position": {
+		"x": 680,
+		"y": 320,
+		"normalizedX": 0.7083333333333334,
+		"normalizedY": 0.5714285714285714
+	  },
+	  "bounds": null
+	}
+  ]
+}

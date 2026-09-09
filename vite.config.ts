@@ -41,6 +41,138 @@ export default defineConfig(
           name: "qwen-local-api",
 
           configureServer(server) {
+            const modelApiKey =
+              env.MODEL_API_KEY ||
+              dashscopeApiKey;
+
+            const modelBaseUrl =
+              env.MODEL_BASE_URL ||
+              `${DASHSCOPE_BASE_URL}/compatible-mode/v1`;
+
+            const modelName =
+              env.MODEL_NAME ||
+              "qwen3.8-flash";
+
+            const readJsonBody = async (
+              request: AsyncIterable<Buffer>,
+            ) => {
+              let rawBody = "";
+
+              for await (const chunk of request) {
+                rawBody += chunk.toString();
+              }
+
+              return JSON.parse(rawBody || "{}") as unknown;
+            };
+
+            const callModel = async (
+              messages: unknown[],
+            ) => {
+              if (!modelApiKey) {
+                throw new Error(
+                  "MODEL_API_KEY or DASHSCOPE_API_KEY is not configured on the server.",
+                );
+              }
+
+              const result = await fetch(
+                `${modelBaseUrl}/chat/completions`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${modelApiKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    model: modelName,
+                    messages,
+                    temperature: 0.2,
+                    response_format: { type: "json_object" },
+                  }),
+                },
+              );
+
+              const payload = await result.json().catch(() => ({})) as {
+                error?: { message?: string };
+                choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
+              };
+
+              if (!result.ok) {
+                throw new Error(
+                  payload.error?.message ||
+                  `Model service returned ${result.status}`,
+                );
+              }
+
+              const content = payload.choices?.[0]?.message?.content;
+              const text = typeof content === "string"
+                ? content
+                : Array.isArray(content)
+                  ? content.map((part) => part.text || "").join("")
+                  : "{}";
+
+              return JSON.parse(
+                text.replace(/^```json\s*|\s*```$/g, ""),
+              ) as Record<string, unknown>;
+            };
+
+            server.middlewares.use(
+              "/api/interpret",
+              async (request, response, next) => {
+                if (request.method !== "POST") {
+                  next();
+                  return;
+                }
+
+                response.setHeader("Content-Type", "application/json; charset=utf-8");
+
+                try {
+                  const body = await readJsonBody(request);
+                  const interpretation = await callModel([
+                    {
+                      role: "system",
+                      content: "You interpret a player's 2D level sketch for Worldloom. Return JSON only with summary, confidence (0..1), dimensions (six semantic axis values 0..1), exactly three candidates [{name,type,description,confidence,dimensions}], alternative_readings [{summary,rationale}], and questions [string]. Types must distinguish environment from gameplay. Do not generate 3D or code.",
+                    },
+                    { role: "user", content: JSON.stringify(body) },
+                  ]);
+
+                  response.statusCode = 200;
+                  response.end(JSON.stringify({ ...interpretation, source: "model", model: modelName }));
+                } catch (error) {
+                  response.statusCode = 503;
+                  response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Model request failed" }));
+                }
+              },
+            );
+
+            server.middlewares.use(
+              "/api/generate-contract",
+              async (request, response, next) => {
+                if (request.method !== "POST") {
+                  next();
+                  return;
+                }
+
+                response.setHeader("Content-Type", "application/json; charset=utf-8");
+
+                try {
+                  const body = await readJsonBody(request);
+                  const result = await callModel([
+                    {
+                      role: "system",
+                      content: "Validate this Worldloom Playable Generation Contract. Return JSON only with status ('ready' or 'needs_review') and note. Never claim to have generated a playable 3D level.",
+                    },
+                    { role: "user", content: JSON.stringify(body) },
+                  ]);
+
+                  response.statusCode = 200;
+                  response.end(JSON.stringify({ ...result, source: "model", model: modelName }));
+                } catch (error) {
+                  response.statusCode = 503;
+                  response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Contract validation failed" }));
+                }
+              },
+            );
+
             server.middlewares.use(
               "/api/qwen/interpret",
 

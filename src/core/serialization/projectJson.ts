@@ -158,12 +158,27 @@ export function exportProject(
 ): string {
   const updatedAt = Date.now();
 
+  const sharedGameplayGraph =
+    project.sharedLevelDesignState.gameplay.graph;
+
+  const legacyGameplayGraph =
+    project.gameplayGraph;
+
+  const sharedGraphHasContent =
+    sharedGameplayGraph.nodes.length > 0 ||
+    sharedGameplayGraph.relations.length > 0 ||
+    sharedGameplayGraph.routes.length > 0;
+
+  const legacyGraphHasContent =
+    legacyGameplayGraph.nodes.length > 0 ||
+    legacyGameplayGraph.relations.length > 0 ||
+    legacyGameplayGraph.routes.length > 0;
+
   const gameplayGraph =
     cloneGameplayGraph(
-      project
-        .sharedLevelDesignState
-        .gameplay
-        .graph,
+      sharedGraphHasContent || !legacyGraphHasContent
+        ? sharedGameplayGraph
+        : legacyGameplayGraph,
     );
 
   const gameplayValidation =

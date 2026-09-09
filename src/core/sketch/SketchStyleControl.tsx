@@ -1,11 +1,11 @@
 import {
-  SEMANTIC_STYLES,
-  type SemanticStyleKey,
+  sketchStyles,
+  type SketchSemantic,
 } from "../../core/sketch/semanticStyles";
 
 type SketchStyleControlProps = {
-  value: SemanticStyleKey;
-  onChange: (value: SemanticStyleKey) => void;
+  value: SketchSemantic;
+  onChange: (value: SketchSemantic) => void;
   compact?: boolean;
 };
 
@@ -14,7 +14,9 @@ export function SketchStyleControl({
   onChange,
   compact = false,
 }: SketchStyleControlProps) {
-  const entries = Object.values(SEMANTIC_STYLES);
+  const entries = Object.entries(sketchStyles) as Array<
+    [SketchSemantic, (typeof sketchStyles)[SketchSemantic]]
+  >;
 
   return (
     <div
@@ -24,27 +26,27 @@ export function SketchStyleControl({
           : "sketch-style-control"
       }
     >
-      {entries.map((style) => {
-        const active = value === style.key;
+      {entries.map(([key, style]) => {
+        const active = value === key;
 
         return (
           <button
-            key={style.key}
+            key={key}
             type="button"
             className={
               active
                 ? "sketch-style-option is-active"
                 : "sketch-style-option"
             }
-            onClick={() => onChange(style.key)}
+            onClick={() => onChange(key)}
             title={style.label}
             aria-pressed={active}
           >
             <span
               className="sketch-style-option__swatch"
               style={{
-                borderColor: style.stroke,
-                background: style.fill,
+                borderColor: style.color,
+                background: "transparent",
               }}
             />
 
