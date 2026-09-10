@@ -2,9 +2,10 @@
 import type { SketchSemantic } from "../core/sketch/semanticStyles";
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, Tool, WorldloomProject, WholeLevelState, StructuralIssue } from "../core/types";
+import type { AccessibilityZone, CollisionShape, EditableRoomProperty, EditScope, EditorMode, EditorSubmode, ExperienceFeedback, FieldCell, GameplayConstraint, GameplaySemanticElement, GameplaySemanticPoint, GameplaySemanticType, ImpactPreview, LevelVariant, PlaytestSession, Point, ProposedChange, RoomEdit, RoomNode, SelectedEntity, Stroke, StrokeType, SurfaceData, Tool, WorldloomProject, WholeLevelState, StructuralIssue } from "../core/types";
 import type { ClarificationAnswer, InterpretationMode, IntentInterpretationResult, ResearchMode } from "../core/intent/types";
-import type { AssetInstance, SketchMarkKind, SketchObjectType, SketchRelationType } from "../core/sketch/types";
+import type { AssetInstance, MovementBehavior, SketchMarkKind, SketchObjectType, SketchRelationType } from "../core/sketch/types";
+import { defaultMovementBehavior, removeAssetMovement, synchronizeAssetMovement } from "../core/baseMap";
 import type { SemanticItemKind } from "../core/sketch/semanticStyles";
 import { mockAssetLibrary } from "../assets/mockAssetLibrary";
 import type { AssetDefinition } from "../core/sketch/types";
@@ -263,9 +264,18 @@ export type WorldloomState = {
   confirmWorldSetting: () => void;
   submitSketch: () => void;
   clearUnsubmittedSketch: () => void;
-  setMapLayerVisible: (layer: "baseMapVisible" | "editVisible" | "gameplayVisible", visible: boolean) => void;
+  setMapLayerVisible: (layer: "baseMapVisible" | "editVisible" | "gameplayVisible" | "surfaceVisible" | "accessibilityVisible" | "collisionVisible", visible: boolean) => void;
+  addBaseMapSurface: (surface: Omit<SurfaceData, "id">) => string;
+  addAccessibilityZone: (zone: Omit<AccessibilityZone, "id" | "source"> & Partial<Pick<AccessibilityZone, "source">>) => string;
+  addCollisionShape: (shape: Omit<CollisionShape, "id" | "source"> & Partial<Pick<CollisionShape, "source">>) => string;
+  updateBaseMapSurface: (id: string, patch: Partial<Pick<SurfaceData, "materialId" | "materialScale" | "textureReference">>) => void;
+  deleteBaseMapElement: (kind: "surface" | "accessibility" | "collision", id: string) => void;
+  setAssetMovementBehavior: (assetInstanceId: string, behavior: MovementBehavior) => void;
+  setAssetCollisionFootprintScale: (assetInstanceId: string, scale: number) => void;
   setGameplayLayerLocked: (locked: boolean) => void;
   gameplaySelectionId: string | null;
+  focusRequest: { assetId: string; requestId: string } | null;
+  focusAssetInstance: (assetInstanceId: string) => void;
   selectGameplayElement: (id: string | null) => void;
   createGameplayElement: (type: GameplaySemanticType, position: GameplaySemanticPoint, sourceDoodleId?: string) => void;
   updateGameplayElement: (id: string, patch: Partial<Omit<GameplaySemanticElement, "id" | "type">>) => void;
@@ -542,6 +552,18 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   modelError: null,
   modelSource: "demo",
   gameplaySelectionId: null,
+  focusRequest: null,
+  focusAssetInstance: (assetInstanceId) => {
+    const state = get();
+    if (!state.project.sketchState.assetInstances.some((asset) => asset.id === assetInstanceId)) return;
+    set({
+      project: { ...state.project, sketchSelection: { ids: [assetInstanceId] } },
+      selected: { kind: "asset", id: assetInstanceId },
+      gameplaySelectionId: null,
+      activeTool: "select",
+      focusRequest: { assetId: assetInstanceId, requestId: nanoid(7) },
+    });
+  },
   generationContract: initialProject.generationContract ?? null,
   validationIssues: initialProject.validationIssues ?? [],
   setSemanticDimension: (key, value) => {
@@ -668,14 +690,70 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
       gameplayLocked: current?.gameplayLocked ?? false,
       baseMapUrl: current?.baseMapUrl,
       baseMapStatus: current?.baseMapStatus ?? "not_generated",
+      surfaceVisible: current?.surfaceVisible ?? true,
+      accessibilityVisible: current?.accessibilityVisible ?? false,
+      collisionVisible: current?.collisionVisible ?? false,
       [layer]: visible,
     };
     set({ project: { ...state.project, mapLayers } });
   },
+  addBaseMapSurface: (surface) => {
+    const state = get();
+    const id = `surface_${nanoid(8)}`;
+    const next: SurfaceData = { ...surface, id };
+    set({ project: { ...state.project, baseMap: { ...state.project.baseMap, surfaces: [...state.project.baseMap.surfaces, next] }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: { kind: "base-surface", id } });
+    return id;
+  },
+  addAccessibilityZone: (zone) => {
+    const state = get();
+    const id = `access_${nanoid(8)}`;
+    const next: AccessibilityZone = { ...zone, id, source: zone.source ?? "manual" };
+    set({ project: { ...state.project, baseMap: { ...state.project.baseMap, accessibilityZones: [...state.project.baseMap.accessibilityZones, next] }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: { kind: "base-accessibility", id } });
+    return id;
+  },
+  addCollisionShape: (shape) => {
+    const state = get();
+    const id = `collision_${nanoid(8)}`;
+    const next: CollisionShape = { ...shape, id, source: shape.source ?? "manual" };
+    set({ project: { ...state.project, baseMap: { ...state.project.baseMap, collisions: [...state.project.baseMap.collisions, next] }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: { kind: "base-collision", id } });
+    return id;
+  },
+  updateBaseMapSurface: (id, patch) => {
+    const state = get();
+    if (!state.project.baseMap.surfaces.some((surface) => surface.id === id)) return;
+    set({ project: { ...state.project, baseMap: { ...state.project.baseMap, surfaces: state.project.baseMap.surfaces.map((surface) => surface.id === id ? { ...surface, ...patch } : surface) }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
+  deleteBaseMapElement: (kind, id) => {
+    const state = get();
+    const baseMap = kind === "surface"
+      ? { ...state.project.baseMap, surfaces: state.project.baseMap.surfaces.filter((item) => item.id !== id) }
+      : kind === "accessibility"
+        ? { ...state.project.baseMap, accessibilityZones: state.project.baseMap.accessibilityZones.filter((item) => item.id !== id) }
+        : { ...state.project.baseMap, collisions: state.project.baseMap.collisions.filter((item) => item.id !== id) };
+    set({ project: { ...state.project, baseMap, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: null });
+  },
+  setAssetMovementBehavior: (assetInstanceId, behavior) => {
+    const state = get();
+    const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
+    const definition = asset && mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+    if (!asset || !definition) return;
+    const nextAsset = { ...asset, movementBehavior: behavior };
+    const baseMap = synchronizeAssetMovement(state.project.baseMap, nextAsset, definition);
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? nextAsset : item) }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
+  setAssetCollisionFootprintScale: (assetInstanceId, scale) => {
+    const state = get();
+    const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
+    const definition = asset && mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+    if (!asset || !definition) return;
+    const nextAsset = { ...asset, collisionFootprintScale: Math.max(.35, Math.min(2, scale)) };
+    const baseMap = synchronizeAssetMovement(state.project.baseMap, nextAsset, definition);
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? nextAsset : item) }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+  },
   setGameplayLayerLocked: (locked) => {
     const state = get();
     const current = state.project.mapLayers;
-    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: locked, baseMapUrl: current?.baseMapUrl, baseMapStatus: current?.baseMapStatus ?? "not_generated" }, gameplaySemanticLayer: { elements: state.project.gameplaySemanticLayer?.elements ?? [], locked } } });
+    set({ project: { ...state.project, mapLayers: { ...current, baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: locked }, gameplaySemanticLayer: { elements: state.project.gameplaySemanticLayer?.elements ?? [], locked } } });
   },
   selectGameplayElement: (id) => {
     set({ gameplaySelectionId: id, selected: id ? { kind: "gameplay", id } : null });
@@ -705,7 +783,19 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const layer = state.project.gameplaySemanticLayer ?? { elements: [], locked: false };
     set({ project: { ...state.project, gameplaySemanticLayer: { ...layer, elements: layer.elements.map((item) => item.id === id ? { ...item, ...patch } : item) } } });
   },
-  moveGameplayElement: (id, position) => get().updateGameplayElement(id, { position }),
+  moveGameplayElement: (id, position) => {
+    const item = get().project.gameplaySemanticLayer?.elements.find((element) => element.id === id);
+    if (!item) return;
+    const dx = position.x - item.position.x;
+    const dy = position.y - item.position.y;
+    const shift = (point: GameplaySemanticPoint | undefined) => point ? { x: point.x + dx, y: point.y + dy } : undefined;
+    get().updateGameplayElement(id, {
+      position,
+      startPoint: shift(item.startPoint),
+      endPoint: shift(item.endPoint),
+      waypoints: item.waypoints?.map((point) => shift(point)!),
+    });
+  },
   resizeGameplayElement: (id, region) => get().updateGameplayElement(id, { region: { width: Math.max(24, region.width), height: Math.max(24, region.height) } }),
   deleteGameplayElement: (id) => {
     const state = get(); if (state.project.mapLayers?.gameplayLocked || state.project.gameplaySemanticLayer?.locked) return;
@@ -737,7 +827,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
   setMapBaseMapUrl: (url) => {
     const state = get();
     const current = state.project.mapLayers;
-    set({ project: { ...state.project, mapLayers: { baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: current?.gameplayLocked ?? false, baseMapUrl: url, baseMapStatus: url ? "generated" : "not_generated" } } });
+    set({ project: { ...state.project, mapLayers: { ...current, baseMapVisible: current?.baseMapVisible ?? false, editVisible: current?.editVisible ?? current?.sketchVisible ?? true, gameplayVisible: current?.gameplayVisible ?? true, gameplayLocked: current?.gameplayLocked ?? false, baseMapUrl: url, baseMapStatus: url ? "generated" : "not_generated" } } });
   },
   setGeneratedOutput: (output) => {
     const state = get();
@@ -1122,6 +1212,8 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
       position: position ?? seededPosition(state.project.sketchState.assetInstances.length),
       rotation: 0,
       scale: 1,
+      movementBehavior: defaultMovementBehavior(definition),
+      collisionFootprintScale: 1,
       locked: false,
       preserve: false,
       doNotDuplicate: definition.defaultConstraints?.duplicable === false,
@@ -1130,7 +1222,8 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
       sourceAssetRef: definition.sourceRef,
       createdAt: Date.now(),
     };
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: [...state.project.sketchState.assetInstances, asset] }, sketchSelection: { ids: [asset.id] }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const baseMap = synchronizeAssetMovement(state.project.baseMap, asset, definition);
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: [...state.project.sketchState.assetInstances, asset] }, sketchSelection: { ids: [asset.id] }, metadata: { ...state.project.metadata, updatedAt: Date.now() } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: { kind: "asset", id: asset.id } });
     logEvent("asset_dragged_from_library", { assetDefinitionId });
     logEvent("asset_instance_created", { assetInstanceId: asset.id, assetDefinitionId });
   },
@@ -1145,7 +1238,10 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const createdMarker = meaningfulChange && !semanticItems.some((item) => item.kind === "question" && item.targetId === assetInstanceId);
     const nextSemanticItems = createdMarker ? [...semanticItems, { id: `MOVE-${assetInstanceId}`, kind: "question" as const, targetId: assetInstanceId, text: "This spatial change may alter the element's role. Ask the model to re-interpret it?", source: "auto_detected" as const, offset: { x: 70, y: 0 }, visualPosition: { x: nextPosition.x + 70, y: nextPosition.y }, status: "open" as const }] : semanticItems;
     if (meaningfulChange) movementBaselines.set(assetInstanceId, nextPosition);
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? { ...item, position: { ...item.position, x: item.position.x + dx, y: item.position.y + dy, time: Date.now() } } : item), semanticItems: nextSemanticItems } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const nextAsset = { ...asset, position: { ...asset.position, x: asset.position.x + dx, y: asset.position.y + dy, time: Date.now() } };
+    const definition = mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+    const baseMap = definition ? synchronizeAssetMovement(state.project.baseMap, nextAsset, definition) : state.project.baseMap;
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? nextAsset : item), semanticItems: nextSemanticItems } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("asset_moved", { assetInstanceId, dx, dy });
     if (createdMarker) { logEvent("ai_marker_created", { semanticItemId: `MOVE-${assetInstanceId}`, source: "auto_detected", trigger: "meaningful_asset_move" }); logEvent("ai_question_generated", { semanticItemId: `MOVE-${assetInstanceId}` }); }
   },
@@ -1153,7 +1249,10 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const state = get();
     const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
     if (!asset || asset.locked) return;
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? { ...item, rotation: (item.rotation + degrees + 360) % 360 } : item) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const nextAsset = { ...asset, rotation: (asset.rotation + degrees + 360) % 360 };
+    const definition = mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+    const baseMap = definition ? synchronizeAssetMovement(state.project.baseMap, nextAsset, definition) : state.project.baseMap;
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: state.project.sketchState.assetInstances.map((item) => item.id === assetInstanceId ? nextAsset : item) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("asset_rotated", { assetInstanceId, degrees });
   },
   toggleAssetLock: (assetInstanceId) => {
@@ -1169,7 +1268,9 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const asset = state.project.sketchState.assetInstances.find((item) => item.id === assetInstanceId);
     if (!asset || asset.doNotDuplicate) return;
     const duplicate = { ...asset, id: `AI-${nanoid(5)}`, position: { ...asset.position, x: asset.position.x + 36, y: asset.position.y + 28, time: Date.now() }, locked: false, createdAt: Date.now() };
-    set({ project: { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: [...state.project.sketchState.assetInstances, duplicate] }, sketchSelection: { ids: [duplicate.id] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
+    const definition = mockAssetLibrary.find((item) => item.id === duplicate.assetDefinitionId);
+    const baseMap = definition ? synchronizeAssetMovement(state.project.baseMap, duplicate, definition) : state.project.baseMap;
+    set({ project: { ...state.project, baseMap, sketchState: { ...state.project.sketchState, assetInstances: [...state.project.sketchState.assetInstances, duplicate] }, sketchSelection: { ids: [duplicate.id] } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [], selected: { kind: "asset", id: duplicate.id } });
     logEvent("asset_duplicated", { sourceAssetInstanceId: assetInstanceId, assetInstanceId: duplicate.id });
   },
   deleteAssetInstance: (assetInstanceId) => {
@@ -1181,7 +1282,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     const remainingAssets = state.project.sketchState.assetInstances.filter((item) => item.id !== assetInstanceId);
     const semanticItems = (state.project.sketchState.semanticItems ?? []).filter((item) => item.targetId !== assetInstanceId);
     if (hadCommittedReference && remainingAssets[0]) semanticItems.push({ id: `DELETE-${assetInstanceId}`, kind: "question", targetId: remainingAssets[0].id, text: `Structural warning: ${assetInstanceId} was committed but deleted. Reassign or redraw the dependency.`, source: "model", offset: { x: 70, y: 0 } });
-    const project = { ...state.project, sketchState: { ...state.project.sketchState, assetInstances: remainingAssets, relations: state.project.sketchState.relations.filter((relation) => relation.sourceId !== assetInstanceId && relation.targetId !== assetInstanceId), annotations: state.project.sketchState.annotations.filter((note) => note.targetId !== assetInstanceId), semanticItems, groups: state.project.sketchState.groups.map((group) => ({ ...group, memberIds: group.memberIds.filter((id) => id !== assetInstanceId) })).filter((group) => group.memberIds.length > 0) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== assetInstanceId) }, validationIssues, wholeLevelState: hadCommittedReference ? "needs_validation" as const : state.project.wholeLevelState };
+    const project = { ...state.project, baseMap: removeAssetMovement(state.project.baseMap, assetInstanceId), sketchState: { ...state.project.sketchState, assetInstances: remainingAssets, relations: state.project.sketchState.relations.filter((relation) => relation.sourceId !== assetInstanceId && relation.targetId !== assetInstanceId), annotations: state.project.sketchState.annotations.filter((note) => note.targetId !== assetInstanceId), semanticItems, groups: state.project.sketchState.groups.map((group) => ({ ...group, memberIds: group.memberIds.filter((id) => id !== assetInstanceId) })).filter((group) => group.memberIds.length > 0) }, sketchSelection: { ids: state.project.sketchSelection.ids.filter((id) => id !== assetInstanceId) }, validationIssues, wholeLevelState: hadCommittedReference ? "needs_validation" as const : state.project.wholeLevelState };
     set({ project, wholeLevelState: project.wholeLevelState ?? "editing", validationIssues, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("asset_deleted", { assetInstanceId });
     if (hadCommittedReference) logEvent("structural_conflict_detected", { issueId: `deleted-${assetInstanceId}`, sourceIds: [assetInstanceId] });
@@ -1300,7 +1401,7 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
     set({ project: { ...state.project, sketchState: { ...state.project.sketchState, relations: state.project.sketchState.relations.filter((relation) => relation.id !== relationId), semanticItems: (state.project.sketchState.semanticItems ?? []).filter((item) => item.id !== `REL-${relationId}`) } }, undoHistory: commit(state.project, state.undoHistory), redoHistory: [] });
     logEvent("relation_deleted", { relationId });
   },
-  selectSketchIds: (ids) => set((state) => ({ project: { ...state.project, sketchSelection: { ids } } })),
+  selectSketchIds: (ids) => set((state) => ({ project: { ...state.project, sketchSelection: { ids } }, selected: state.selected?.kind.startsWith("base-") ? null : state.selected })),
   groupSelectedSketch: () => {
     const state = get();
     if (state.project.sketchSelection.ids.length < 2) return;
@@ -1472,13 +1573,14 @@ export const useWorldloomStore = create<WorldloomState>((set, get) => {
       healing_shrine: { x: 535, y: 250, time: Date.now() },
     };
     const ids = demo === "high-ground" ? ["watchtower", "barricade", "stone_stair", "enemy_shrine", "reward_chest"] : demo === "gated-recovery" ? ["gate", "healing_shrine", "bridge"] : ["bridge", "reward_chest", "barricade"];
-    const assetInstances = ids.map((assetDefinitionId) => ({ id: `AI-${assetDefinitionId}`, assetDefinitionId, position: positions[assetDefinitionId], rotation: 0, scale: 1, locked: false, preserve: false, roleAssignments: [], createdAt: Date.now() }));
+    const assetInstances = ids.map((assetDefinitionId) => { const definition = mockAssetLibrary.find((item)=>item.id===assetDefinitionId)!; return { id: `AI-${assetDefinitionId}`, assetDefinitionId, position: positions[assetDefinitionId], rotation: 0, scale: 1, movementBehavior: defaultMovementBehavior(definition), collisionFootprintScale: 1, locked: false, preserve: false, roleAssignments: [], createdAt: Date.now() }; });
     const loop = { id: "SM-demo-loop", kind: "loop" as const, points: [{ x: 385, y: 175, time: Date.now() }, { x: 535, y: 190, time: Date.now() }, { x: 540, y: 315, time: Date.now() }, { x: 380, y: 310, time: Date.now() }, { x: 385, y: 175, time: Date.now() }], createdAt: Date.now() };
     const arrow = { id: "SM-demo-arrow", kind: "arrow" as const, points: [{ x: 290, y: 320, time: Date.now() }, { x: 415, y: 225, time: Date.now() }], createdAt: Date.now() };
     const marks = demo === "high-ground" ? [loop, arrow] : [loop];
     const relations = demo === "high-ground" ? [{ id: "SR-demo-stair-tower", sourceId: "AI-stone_stair", targetId: "AI-watchtower", relationType: "related_to" as const, directed: true }] : [];
     const selection = demo === "high-ground" ? ["AI-watchtower", "AI-barricade", "AI-enemy_shrine", "AI-stone_stair", "SM-demo-loop", "SM-demo-arrow"] : assetInstances.map((asset) => asset.id).concat(marks.map((mark) => mark.id));
-    const project = { ...base, name: demo === "high-ground" ? "Demo A - High-Ground Encounter" : demo === "gated-recovery" ? "Demo B - Gated Recovery Area" : "Demo C - Optional Detour", sketchState: { ...base.sketchState, assetInstances, marks, relations }, sketchSelection: { ids: selection }, wholeLevelState: "editing" as const, semanticDimensions: {}, validationIssues: [] };
+    const baseMap = assetInstances.reduce((current,asset)=>synchronizeAssetMovement(current,asset,mockAssetLibrary.find((item)=>item.id===asset.assetDefinitionId)!),base.baseMap);
+    const project = { ...base, baseMap, name: demo === "high-ground" ? "Demo A - High-Ground Encounter" : demo === "gated-recovery" ? "Demo B - Gated Recovery Area" : "Demo C - Optional Detour", sketchState: { ...base.sketchState, assetInstances, marks, relations }, sketchSelection: { ids: selection }, wholeLevelState: "editing" as const, semanticDimensions: {}, validationIssues: [] };
     set({ project, selected: null, editorMode: "intent", editorSubmode: "inspect", wholeLevelState: "editing", generationContract: null, validationIssues: [], modelStatus: "idle", modelError: null, modelSource: "demo", undoHistory: [], redoHistory: [] });
     logEvent("asset_instance_created", { demo, count: assetInstances.length });
   },

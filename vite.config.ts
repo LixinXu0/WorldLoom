@@ -6,7 +6,7 @@ import {
 import react from "@vitejs/plugin-react";
 
 
-const DASHSCOPE_BASE_URL =
+const DEFAULT_DASHSCOPE_BASE_URL =
   "https://dashscope.aliyuncs.com";
 
 
@@ -33,6 +33,10 @@ export default defineConfig(
     const dashscopeApiKey =
       env.DASHSCOPE_API_KEY;
 
+    const dashscopeBaseUrl =
+      env.DASHSCOPE_BASE_URL ||
+      DEFAULT_DASHSCOPE_BASE_URL;
+
     return {
       plugins: [
         react(),
@@ -47,7 +51,7 @@ export default defineConfig(
 
             const modelBaseUrl =
               env.MODEL_BASE_URL ||
-              `${DASHSCOPE_BASE_URL}/compatible-mode/v1`;
+              `${dashscopeBaseUrl}/compatible-mode/v1`;
 
             const modelName =
               env.MODEL_NAME ||
@@ -283,7 +287,7 @@ export default defineConfig(
 
                   const qwenResponse =
                     await fetch(
-                      `${DASHSCOPE_BASE_URL}/compatible-mode/v1/chat/completions`,
+                      `${dashscopeBaseUrl}/compatible-mode/v1/chat/completions`,
                       {
                         method: "POST",
 
@@ -603,7 +607,7 @@ export default defineConfig(
 
                   const qwenResponse =
                     await fetch(
-                      `${DASHSCOPE_BASE_URL}/compatible-mode/v1/chat/completions`,
+                      `${dashscopeBaseUrl}/compatible-mode/v1/chat/completions`,
                       {
                         method: "POST",
 
@@ -840,7 +844,7 @@ export default defineConfig(
 
                   const createResponse =
                     await fetch(
-                      `${DASHSCOPE_BASE_URL}/api/v1/services/aigc/text2image/image-synthesis`,
+                      `${dashscopeBaseUrl}/api/v1/services/aigc/text2image/image-synthesis`,
                       {
                         method: "POST",
 
@@ -950,7 +954,7 @@ export default defineConfig(
 
                     const taskResponse =
                       await fetch(
-                        `${DASHSCOPE_BASE_URL}/api/v1/tasks/${taskId}`,
+                        `${dashscopeBaseUrl}/api/v1/tasks/${taskId}`,
                         {
                           headers: {
                             Authorization:

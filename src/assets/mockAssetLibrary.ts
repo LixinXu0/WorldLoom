@@ -7,6 +7,8 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "structure",
     candidateRoles: ["elevated landmark", "high-ground perch", "observation point"],
     capabilities: ["walkable-top", "vertical landmark", "elevated encounter support"],
+    defaultMovementBehavior: "blocking",
+    metadata: { collisionFootprint: { width: 86, height: 78 } },
     defaultConstraints: { movable: true, duplicable: true, replaceable: false, rotatable: true },
   },
   {
@@ -15,6 +17,8 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "cover",
     candidateRoles: ["cover", "boundary", "defensive structure"],
     capabilities: ["blocks movement", "supports cover", "shapes encounter edge"],
+    defaultMovementBehavior: "blocking",
+    metadata: { collisionFootprint: { width: 112, height: 34 } },
     defaultConstraints: { movable: true, duplicable: true, replaceable: true, rotatable: true },
   },
   {
@@ -23,6 +27,7 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "traversal",
     candidateRoles: ["vertical connector", "approach route"],
     capabilities: ["connects elevation", "supports approach", "walkable"],
+    defaultMovementBehavior: "passable",
     defaultConstraints: { movable: true, duplicable: false, replaceable: false, rotatable: true },
   },
   {
@@ -31,6 +36,7 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "encounter",
     candidateRoles: ["encounter source", "spawn trigger", "danger landmark"],
     capabilities: ["spawns enemies", "marks danger", "anchors encounter"],
+    defaultMovementBehavior: "passable",
     defaultConstraints: { movable: true, duplicable: true, replaceable: true, rotatable: true },
   },
   {
@@ -39,6 +45,7 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "reward",
     candidateRoles: ["optional reward", "objective"],
     capabilities: ["grants reward", "anchors detour", "marks objective"],
+    defaultMovementBehavior: "passable",
     defaultConstraints: { movable: true, duplicable: true, replaceable: true, rotatable: true },
   },
   {
@@ -47,6 +54,7 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "gating",
     candidateRoles: ["gating", "progression control"],
     capabilities: ["blocks until opened", "marks threshold", "supports lock-and-key pacing"],
+    defaultMovementBehavior: "custom",
     defaultConstraints: { movable: true, duplicable: true, replaceable: false, rotatable: true },
   },
   {
@@ -55,6 +63,7 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "traversal",
     candidateRoles: ["traversal connector", "chokepoint"],
     capabilities: ["connects gaps", "supports route choice", "creates chokepoint"],
+    defaultMovementBehavior: "passable",
     defaultConstraints: { movable: true, duplicable: false, replaceable: false, rotatable: true },
   },
   {
@@ -63,7 +72,28 @@ export const mockAssetLibrary: AssetDefinition[] = [
     category: "recovery",
     candidateRoles: ["recovery", "safe node", "relief landmark"],
     capabilities: ["restores health", "anchors safe space", "signals relief"],
+    defaultMovementBehavior: "passable",
     defaultConstraints: { movable: true, duplicable: true, replaceable: true, rotatable: true },
+  },
+  {
+    id: "door",
+    name: "Door",
+    category: "gating",
+    candidateRoles: ["doorway", "open threshold", "entrance"],
+    capabilities: ["supports passage", "can be overridden as blocking"],
+    defaultMovementBehavior: "passable",
+    defaultConstraints: { movable: true, duplicable: true, replaceable: true, rotatable: true },
+    metadata: { collisionFootprint: { width: 72, height: 24 } },
+  },
+  {
+    id: "castle",
+    name: "Castle",
+    category: "structure",
+    candidateRoles: ["fortified building", "large landmark", "stronghold"],
+    capabilities: ["blocks movement", "occupies a large footprint"],
+    defaultMovementBehavior: "blocking",
+    defaultConstraints: { movable: true, duplicable: true, replaceable: false, rotatable: true },
+    metadata: { collisionFootprint: { width: 176, height: 126 } },
   },
 ];
 

@@ -1,4 +1,6 @@
 import type { WorldloomProject } from "../types";
+import { defaultMovementBehavior, emptyBaseMapState, synchronizeAssetMovement } from "../baseMap";
+import { mockAssetLibrary } from "../../assets/mockAssetLibrary";
 
 import {
   createSketchStateFromStrokes,
@@ -55,7 +57,10 @@ function normalizeSketchState(
 
   return {
     assetInstances:
-      sketch.assetInstances ?? [],
+      (sketch.assetInstances ?? []).map((asset) => {
+        const definition = mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+        return { ...asset, movementBehavior: asset.movementBehavior ?? (definition ? defaultMovementBehavior(definition) : "passable"), collisionFootprintScale: asset.collisionFootprintScale ?? 1 };
+      }),
 
     rawStrokes:
       sketch.rawStrokes ?? [],
@@ -808,6 +813,18 @@ function withCurrentDefaults(
       metadata.updatedAt,
     );
 
+  let baseMap = {
+    ...emptyBaseMapState(),
+    ...(project.baseMap ?? {}),
+    surfaces: project.baseMap?.surfaces ?? [],
+    accessibilityZones: (project.baseMap?.accessibilityZones ?? []).map((zone) => ({ ...zone, source: zone.source ?? "manual" as const })),
+    collisions: (project.baseMap?.collisions ?? []).map((shape) => ({ ...shape, source: shape.source ?? "manual" as const })),
+  };
+  for (const asset of sketchState.assetInstances) {
+    const definition = mockAssetLibrary.find((item) => item.id === asset.assetDefinitionId);
+    if (definition) baseMap = synchronizeAssetMovement(baseMap, asset, definition);
+  }
+
   return {
     name:
       project.name ??
@@ -989,6 +1006,12 @@ function withCurrentDefaults(
       project
         .experienceFeedback ??
       [],
+
+    baseMap,
+
+    mapLayers: project.mapLayers,
+
+    gameplaySemanticLayer: project.gameplaySemanticLayer,
   };
 }
 

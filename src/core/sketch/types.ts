@@ -112,6 +112,7 @@ export type AssetDefinition = {
 
   candidateRoles: string[];
   capabilities: string[];
+  defaultMovementBehavior?: MovementBehavior;
 
   defaultConstraints?: {
     movable?: boolean;
@@ -132,6 +133,8 @@ export type AssetInstance = {
   position: Point;
   rotation: number;
   scale?: number;
+  movementBehavior?: MovementBehavior;
+  collisionFootprintScale?: number;
 
   locked?: boolean;
   preserve?: boolean;
@@ -384,3 +387,5 @@ export type AuthoringIntentFragment =
 export type SketchSelection = {
   ids: string[];
 };
+
+export type MovementBehavior = "passable" | "blocking" | "custom";

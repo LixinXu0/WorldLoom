@@ -4,6 +4,7 @@ import type {
   GameplayRelation,
   GameplayRoute,
 } from "../../core/gameplay/types";
+import { useRef } from "react";
 
 export type GameplayGraphLayerProps = {
   graph: GameplayGraph;
@@ -28,6 +29,8 @@ export type GameplayGraphLayerProps = {
     routeId: string,
     additive: boolean,
   ) => void;
+  onMoveNode?: (nodeId: string, position: { x: number; y: number }) => void;
+  nodesDraggable?: boolean;
 };
 
 function nodeRadius(
@@ -171,7 +174,10 @@ export function GameplayGraphLayer({
   onSelectNode,
   onSelectRelation,
   onSelectRoute,
+  onMoveNode,
+  nodesDraggable = false,
 }: GameplayGraphLayerProps) {
+  const dragRef = useRef<{ nodeId: string; startX: number; startY: number; originX: number; originY: number; x: number; y: number } | null>(null);
   const selectedNodes =
     new Set(selectedNodeIds);
 
@@ -370,6 +376,35 @@ export function GameplayGraphLayer({
                 node.id,
                 event.shiftKey,
               );
+              if (nodesDraggable && event.button === 0) {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                dragRef.current = { nodeId: node.id, startX: event.clientX, startY: event.clientY, originX: node.position.x, originY: node.position.y, x: node.position.x, y: node.position.y };
+              }
+            }}
+            onPointerMove={(event) => {
+              const drag = dragRef.current;
+              if (!drag || drag.nodeId !== node.id) return;
+              event.preventDefault(); event.stopPropagation();
+              const svg = event.currentTarget.closest("svg");
+              const rect = svg?.getBoundingClientRect();
+              if (!rect || rect.width <= 0 || rect.height <= 0) return;
+              drag.x = Math.max(0, Math.min(width, drag.originX + ((event.clientX - drag.startX) / rect.width) * width));
+              drag.y = Math.max(0, Math.min(height, drag.originY + ((event.clientY - drag.startY) / rect.height) * height));
+              event.currentTarget.setAttribute("transform", `translate(${drag.x} ${drag.y})`);
+            }}
+            onPointerUp={(event) => {
+              const drag = dragRef.current;
+              if (!drag || drag.nodeId !== node.id) return;
+              event.preventDefault(); event.stopPropagation();
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+              dragRef.current = null;
+              if (Math.abs(drag.x - drag.originX) + Math.abs(drag.y - drag.originY) >= .5) onMoveNode?.(node.id, { x: drag.x, y: drag.y });
+            }}
+            onPointerCancel={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+              dragRef.current = null;
+              event.currentTarget.setAttribute("transform", `translate(${node.position.x} ${node.position.y})`);
             }}
           >
             <circle

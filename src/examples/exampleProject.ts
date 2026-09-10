@@ -2,6 +2,7 @@ import type {
   Stroke,
   WorldloomProject,
 } from "../core/types";
+import { emptyBaseMapState } from "../core/baseMap";
 
 import {
   emptySketchState,
@@ -240,5 +241,14 @@ export function createEmptyProject(): WorldloomProject {
     playtestSessions: [],
     playtestEvents: [],
     experienceFeedback: [],
+    baseMap: emptyBaseMapState(),
+    mapLayers: {
+      baseMapVisible: true,
+      editVisible: true,
+      gameplayVisible: true,
+      surfaceVisible: true,
+      accessibilityVisible: false,
+      collisionVisible: false,
+    },
   };
 }

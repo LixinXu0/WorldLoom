@@ -291,6 +291,40 @@ export type GameplaySemanticLayer = {
   elements: GameplaySemanticElement[];
   locked: boolean;
 };
+export type BaseMapPoint = { x: number; y: number };
+export type SurfaceMaterialId = "grass" | "dirt" | "stone" | "sand" | "water";
+export type SurfaceData = {
+  id: string;
+  geometry: "stroke" | "fill";
+  operation: "paint" | "erase";
+  points: BaseMapPoint[];
+  materialId: SurfaceMaterialId;
+  textureReference: string;
+  brushSize: number;
+  materialScale: number;
+};
+export type AccessibilityZone = {
+  id: string;
+  geometry: "stroke" | "polygon";
+  points: BaseMapPoint[];
+  state: "walkable" | "blocked";
+  brushSize: number;
+  source: "manual" | "asset-derived";
+  sourceAssetId?: string;
+};
+export type CollisionShape = {
+  id: string;
+  geometry: BaseMapPoint[];
+  type: "line" | "polygon";
+  blocksMovement: true;
+  source: "manual" | "asset-derived";
+  sourceAssetId?: string;
+};
+export type BaseMapState = {
+  surfaces: SurfaceData[];
+  accessibilityZones: AccessibilityZone[];
+  collisions: CollisionShape[];
+};
 export type WorldloomProject = {
   version: string;
   name: string;
@@ -330,6 +364,7 @@ export type WorldloomProject = {
   playtestSessions: PlaytestSession[];
   playtestEvents: PlaytestEvent[];
   experienceFeedback: ExperienceFeedback[];
+  baseMap: BaseMapState;
   wholeLevelState?: WholeLevelState;
   semanticDimensions?: Record<string, { proposed: number; value: number; adjusted: boolean }>;
   sharedDesignState?: SharedDesignState;
@@ -355,6 +390,9 @@ export type WorldloomProject = {
     gameplayLocked?: boolean;
     baseMapUrl?: string;
     baseMapStatus?: "not_generated" | "generating" | "generated" | "failed";
+    surfaceVisible?: boolean;
+    accessibilityVisible?: boolean;
+    collisionVisible?: boolean;
   };
   gameplaySemanticLayer?: GameplaySemanticLayer;
 };
@@ -373,4 +411,7 @@ export type SelectedEntity =
   | { kind: "gameplay-node"; id: string }
   | { kind: "gameplay-relation"; id: string }
   | { kind: "gameplay-route"; id: string }
+  | { kind: "base-surface"; id: string }
+  | { kind: "base-accessibility"; id: string }
+  | { kind: "base-collision"; id: string }
   | null;
